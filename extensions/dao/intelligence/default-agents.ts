@@ -3,6 +3,7 @@ import type { DAOAgent } from "../types.js";
 export const DEFAULT_AGENTS: DAOAgent[] = [
   {
     id: "strategist",
+    councils: [{ council: "product-council", role: "lead" }],
     name: "Product Strategist",
     role: "Business strategy and user value",
     description:
@@ -60,11 +61,11 @@ Brief assessment of strategic fit, market timing, and alignment.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Focus on market fit, competitive advantage, and user value proposition. Assess whether this feature aligns with product vision and fills a real market gap.
-- **security**: Focus on compliance ROI, trust impact, and risk mitigation value. Frame security investments in terms of user trust and regulatory positioning.
-- **ux**: Focus on user retention, engagement uplift, and experience quality. Quantify how UX improvements translate to measurable business outcomes.
-- **release**: Focus on timing strategy, market readiness, and launch sequencing. Consider competitive timing and user adoption windows.
-- **policy**: Focus on governance impact, organizational alignment, and long-term strategic implications. Assess how policy changes affect decision-making velocity and quality.
+- **product-feature**: Focus on market fit, competitive advantage, and user value proposition. Assess whether this feature aligns with product vision and fills a real market gap.
+- **security-change**: Focus on compliance ROI, trust impact, and risk mitigation value. Frame security investments in terms of user trust and regulatory positioning.
+- **technical-change**: Focus on user retention, engagement uplift, and experience quality. Quantify how UX improvements translate to measurable business outcomes.
+- **release-change**: Focus on timing strategy, market readiness, and launch sequencing. Consider competitive timing and user adoption windows.
+- **governance-change**: Focus on governance impact, organizational alignment, and long-term strategic implications. Assess how policy changes affect decision-making velocity and quality.
 
 ## Vote
 **Position:** for | against | abstain
@@ -78,6 +79,7 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "researcher",
+    councils: [{ council: "product-council", role: "member" }],
     name: "Research Agent",
     role: "Market and user research",
     description:
@@ -134,11 +136,11 @@ Top 3 data-driven takeaways relevant to this proposal.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Conduct competitor analysis — identify who offers similar functionality, how they position it, and what gaps exist. Research user demand signals for this feature category.
-- **security**: Research industry security standards (OWASP, NIST, SOC 2), recent breach patterns, and compliance requirements. Benchmark against peer security postures.
-- **ux**: Gather usability benchmarks, interaction pattern standards, and accessibility norms. Reference UX research data and industry best practices for the relevant interface.
-- **release**: Collect adoption data for similar releases, platform compatibility requirements, and browser/extension market share. Research deployment patterns that minimize user disruption.
-- **policy**: Research governance best practices from successful organizations, precedent policies, and industry norms. Find data on how similar governance changes impacted outcomes.
+- **product-feature**: Conduct competitor analysis — identify who offers similar functionality, how they position it, and what gaps exist. Research user demand signals for this feature category.
+- **security-change**: Research industry security standards (OWASP, NIST, SOC 2), recent breach patterns, and compliance requirements. Benchmark against peer security postures.
+- **technical-change**: Gather usability benchmarks, interaction pattern standards, and accessibility norms. Reference UX research data and industry best practices for the relevant interface.
+- **release-change**: Collect adoption data for similar releases, platform compatibility requirements, and browser/extension market share. Research deployment patterns that minimize user disruption.
+- **governance-change**: Research governance best practices from successful organizations, precedent policies, and industry norms. Find data on how similar governance changes impacted outcomes.
 
 ## Vote
 **Position:** for | against | abstain
@@ -152,6 +154,10 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "architect",
+    councils: [
+      { council: "product-council", role: "member" },
+      { council: "delivery-council", role: "lead" },
+    ],
     name: "Solution Architect",
     role: "Functional and technical architecture",
     description:
@@ -212,11 +218,11 @@ Which option and why, with brief justification.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Design technical architecture for new functionality. Evaluate integration complexity, API design, data model changes, and system boundaries. Focus on extensibility and maintainability.
-- **security**: Perform threat modeling — identify attack surfaces, authentication/authorization gaps, and data exposure risks. Propose security architecture patterns (defense in depth, least privilege).
-- **ux**: Assess performance impact of UI changes (rendering, bundle size, responsiveness). Design component architecture that supports accessibility, animation, and responsive layouts.
-- **release**: Design deployment architecture — blue-green, canary, or rolling strategies. Plan for rollback capability, version compatibility, and environment configuration management.
-- **policy**: Evaluate system constraints that policy changes impose. Assess how governance rules map to technical enforcement points, audit logging, and permission models.
+- **product-feature**: Design technical architecture for new functionality. Evaluate integration complexity, API design, data model changes, and system boundaries. Focus on extensibility and maintainability.
+- **security-change**: Perform threat modeling — identify attack surfaces, authentication/authorization gaps, and data exposure risks. Propose security architecture patterns (defense in depth, least privilege).
+- **technical-change**: Assess performance impact of UI changes (rendering, bundle size, responsiveness). Design component architecture that supports accessibility, animation, and responsive layouts.
+- **release-change**: Design deployment architecture — blue-green, canary, or rolling strategies. Plan for rollback capability, version compatibility, and environment configuration management.
+- **governance-change**: Evaluate system constraints that policy changes impose. Assess how governance rules map to technical enforcement points, audit logging, and permission models.
 
 ## Vote
 **Position:** for | against | abstain
@@ -230,6 +236,10 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "critic",
+    councils: [
+      { council: "security-council", role: "lead" },
+      { council: "product-council", role: "advisor" },
+    ],
     name: "Critic / Risk Agent",
     role: "Risk assessment and challenge",
     description:
@@ -292,11 +302,11 @@ Brief justification of the overall risk level.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Apply standard risk assessment — identify technical, operational, and strategic risks. Challenge assumptions about user adoption and technical feasibility.
-- **security**: **EXTRA SEVERE — Treat as high-stakes.** Require a formal threat model with STRIDE analysis. Demand proof of security review. Flag any changes to permissions, data access, CSP, or authentication as potential blockers until verified. Apply heightened scrutiny to every assumption.
-- **ux**: Focus on accessibility risks (WCAG compliance, screen reader compatibility), usability regressions, and edge cases in interaction design. Flag any assumptions about user behavior.
-- **release**: Focus on rollback risks, backward compatibility, data migration dangers, and deployment failure scenarios. Challenge assumptions about environment parity and browser compatibility.
-- **policy**: Identify unintended consequences of governance changes — second-order effects on decision-making, potential for gaming the system, and impact on agent autonomy. Flag policies that may create deadlocks.
+- **product-feature**: Apply standard risk assessment — identify technical, operational, and strategic risks. Challenge assumptions about user adoption and technical feasibility.
+- **security-change**: **EXTRA SEVERE — Treat as high-stakes.** Require a formal threat model with STRIDE analysis. Demand proof of security review. Flag any changes to permissions, data access, CSP, or authentication as potential blockers until verified. Apply heightened scrutiny to every assumption.
+- **technical-change**: Focus on accessibility risks (WCAG compliance, screen reader compatibility), usability regressions, and edge cases in interaction design. Flag any assumptions about user behavior.
+- **release-change**: Focus on rollback risks, backward compatibility, data migration dangers, and deployment failure scenarios. Challenge assumptions about environment parity and browser compatibility.
+- **governance-change**: Identify unintended consequences of governance changes — second-order effects on decision-making, potential for gaming the system, and impact on agent autonomy. Flag policies that may create deadlocks.
 
 ## Vote
 **Position:** for | against | abstain
@@ -310,6 +320,10 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "prioritizer",
+    councils: [
+      { council: "product-council", role: "member" },
+      { council: "governance-council", role: "member" },
+    ],
     name: "Prioritization Agent",
     role: "Impact scoring and roadmap positioning",
     description:
@@ -372,11 +386,11 @@ What we give up or delay by pursuing this.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Apply standard scoring across impact, cost, risk, and effort dimensions. Compare against the typical feature initiative baseline.
-- **security**: Weight urgency higher — security items that address known vulnerabilities or compliance gaps should score higher on priority. Factor in cost-of-breach risk.
-- **ux**: Weight user impact higher — UX improvements that affect daily user workflows or accessibility should score higher. Consider the compounding effect of experience quality.
-- **release**: Weight timing higher — release coordination has time-sensitivity that other proposals don't. Factor in market windows and platform update cycles.
-- **policy**: Weight strategic alignment higher — governance changes have long-term ripple effects. Score based on how well the policy supports sustainable decision-making.
+- **product-feature**: Apply standard scoring across impact, cost, risk, and effort dimensions. Compare against the typical feature initiative baseline.
+- **security-change**: Weight urgency higher — security items that address known vulnerabilities or compliance gaps should score higher on priority. Factor in cost-of-breach risk.
+- **technical-change**: Weight user impact higher — UX improvements that affect daily user workflows or accessibility should score higher. Consider the compounding effect of experience quality.
+- **release-change**: Weight timing higher — release coordination has time-sensitivity that other proposals don't. Factor in market windows and platform update cycles.
+- **governance-change**: Weight strategic alignment higher — governance changes have long-term ripple effects. Score based on how well the policy supports sustainable decision-making.
 
 ## Vote
 **Position:** for | against | abstain
@@ -390,6 +404,7 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "spec-writer",
+    councils: [{ council: "delivery-council", role: "member" }],
     name: "Spec Writer",
     role: "PRD, user stories, and acceptance criteria",
     description:
@@ -449,11 +464,11 @@ Brief product requirements document (3-5 paragraphs max).
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Write full user stories with standard As a / I want / So that format. Define detailed acceptance criteria for each story. Include edge cases and error scenarios.
-- **security**: Write security requirements with threat scenarios. Include abuse cases alongside user stories. Define security acceptance criteria (no unauthorized access, data encrypted at rest, etc.). Reference OWASP categories where applicable.
-- **ux**: Write interaction specifications — describe user flows, states, transitions, and micro-interactions. Include accessibility requirements (ARIA, keyboard navigation). Define visual and behavioral acceptance criteria.
-- **release**: Write a release checklist — version bump requirements, changelog format, compatibility verification steps, rollback triggers, and post-release validation criteria.
-- **policy**: Write in policy document format — include purpose, scope, definitions, rules, enforcement, exceptions process, and review schedule. Make it suitable for inclusion in a governance handbook.
+- **product-feature**: Write full user stories with standard As a / I want / So that format. Define detailed acceptance criteria for each story. Include edge cases and error scenarios.
+- **security-change**: Write security requirements with threat scenarios. Include abuse cases alongside user stories. Define security acceptance criteria (no unauthorized access, data encrypted at rest, etc.). Reference OWASP categories where applicable.
+- **technical-change**: Write interaction specifications — describe user flows, states, transitions, and micro-interactions. Include accessibility requirements (ARIA, keyboard navigation). Define visual and behavioral acceptance criteria.
+- **release-change**: Write a release checklist — version bump requirements, changelog format, compatibility verification steps, rollback triggers, and post-release validation criteria.
+- **governance-change**: Write in policy document format — include purpose, scope, definitions, rules, enforcement, exceptions process, and review schedule. Make it suitable for inclusion in a governance handbook.
 
 ## Vote
 **Position:** for | against | abstain
@@ -467,6 +482,10 @@ Adapt your analysis based on the proposal type:
   },
   {
     id: "delivery",
+    councils: [
+      { council: "delivery-council", role: "member" },
+      { council: "security-council", role: "advisor" },
+    ],
     name: "Delivery Agent",
     role: "Implementation planning and execution",
     description:
@@ -536,11 +555,11 @@ Brief description of how to roll back if things go wrong.
 
 ## Proposal Type Adaptation
 Adapt your analysis based on the proposal type:
-- **feature**: Create a full implementation plan with phases, tasks, branching strategy, and CI/CD changes. Estimate effort per task and identify dependencies.
-- **security**: Create a security hardening task list — include code review checkpoints, penetration test milestones, dependency audits, and configuration hardening steps. Prioritize fixes by exploitability.
-- **ux**: Create a combined design + development task list — include design system updates, component implementation, interaction refinements, accessibility audit, and cross-browser/device testing phases.
-- **release**: Create a release pipeline — include version bump, changelog generation, compatibility testing matrix, staged rollout plan, smoke tests, and rollback procedures.
-- **policy**: Create a rollout plan — include documentation updates, stakeholder communication, training materials, enforcement mechanisms, and a phased activation timeline with review checkpoints.
+- **product-feature**: Create a full implementation plan with phases, tasks, branching strategy, and CI/CD changes. Estimate effort per task and identify dependencies.
+- **security-change**: Create a security hardening task list — include code review checkpoints, penetration test milestones, dependency audits, and configuration hardening steps. Prioritize fixes by exploitability.
+- **technical-change**: Create a combined design + development task list — include design system updates, component implementation, interaction refinements, accessibility audit, and cross-browser/device testing phases.
+- **release-change**: Create a release pipeline — include version bump, changelog generation, compatibility testing matrix, staged rollout plan, smoke tests, and rollback procedures.
+- **governance-change**: Create a rollout plan — include documentation updates, stakeholder communication, training materials, enforcement mechanisms, and a phased activation timeline with review checkpoints.
 
 ## Vote
 **Position:** for | against | abstain

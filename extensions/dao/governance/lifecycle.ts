@@ -1,23 +1,40 @@
 // ============================================================
-// pi-swarm-dao — Proposal Lifecycle State Machine
+// pi-swarm-dao — Proposal Lifecycle State Machine (V2)
 // ============================================================
-// Pure functions enforcing valid proposal status transitions.
-// Terminal states: rejected, executed, failed (no further moves).
+// Pipeline: intake → qualification → analysis → critique →
+//           scoring → council → vote → spec → execution-gate → postmortem
 //
-// open → deliberating → approved → controlled → executed
-//                    ↘ rejected  ↘ rejected   ↘ failed
+// Status mapping (backward compat):
+//   intake/qualification  = "open"
+//   analysis/critique/scoring/council/vote = "deliberating"
+//   spec/execution-gate   = "controlled"
+//   postmortem            = "executed"
 // ============================================================
 
-import type { ProposalStatus } from "../types.js";
+import type { ProposalStatus, PipelineStage } from "../types.js";
 
 /**
- * Valid state transitions map.
- * Keys are current states; values are the set of allowed next states.
- * Empty arrays denote terminal states (no further transitions possible).
+ * Map pipeline stages to legacy proposal statuses.
+ */
+export const STAGE_TO_STATUS: Record<PipelineStage, ProposalStatus> = {
+  intake: "open",
+  qualification: "open",
+  analysis: "deliberating",
+  critique: "deliberating",
+  scoring: "deliberating",
+  council: "deliberating",
+  vote: "deliberating",
+  spec: "controlled",
+  "execution-gate": "controlled",
+  postmortem: "executed",
+};
+
+/**
+ * Valid status transitions (legacy compatibility).
  */
 export const TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
   open: ["deliberating"],
-  deliberating: ["approved", "rejected"],
+  deliberating: ["approved", "rejected", "controlled"],
   approved: ["controlled", "rejected"],
   controlled: ["executed", "failed"],
   rejected: [],
@@ -26,7 +43,23 @@ export const TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
 };
 
 /**
- * Check whether a transition from one status to another is valid.
+ * Valid pipeline stage transitions.
+ */
+export const PIPELINE_TRANSITIONS: Record<PipelineStage, PipelineStage[]> = {
+  intake: ["qualification"],
+  qualification: ["analysis"],   // rejected handled by status change
+  analysis: ["critique"],
+  critique: ["scoring"],
+  scoring: ["council"],
+  council: ["vote"],             // council can reject via status
+  vote: ["spec"],                // vote can reject via status
+  spec: ["execution-gate"],
+  "execution-gate": ["postmortem"], // gate can block via status
+  postmortem: [],                  // terminal
+};
+
+/**
+ * Check whether a status transition is valid.
  */
 export const canTransition = (
   from: ProposalStatus,
@@ -34,7 +67,7 @@ export const canTransition = (
 ): boolean => TRANSITIONS[from].includes(to);
 
 /**
- * Assert that a transition is valid. Throws a descriptive error if not.
+ * Assert that a status transition is valid.
  */
 export const assertTransition = (
   from: ProposalStatus,
@@ -49,15 +82,43 @@ export const assertTransition = (
 };
 
 /**
- * Get all valid next states from a given status.
- * Returns an empty array for terminal states.
+ * Check whether a pipeline stage transition is valid.
  */
-export const nextStates = (from: ProposalStatus): ProposalStatus[] => [
-  ...TRANSITIONS[from],
+export const canAdvancePipeline = (
+  from: PipelineStage,
+  to: PipelineStage
+): boolean => PIPELINE_TRANSITIONS[from].includes(to);
+
+/**
+ * Assert that a pipeline stage transition is valid.
+ */
+export const assertPipelineTransition = (
+  from: PipelineStage,
+  to: PipelineStage
+): void => {
+  if (!canAdvancePipeline(from, to)) {
+    const valid = PIPELINE_TRANSITIONS[from].join(", ") || "none (terminal)";
+    throw new Error(
+      `Invalid pipeline transition: ${from} → ${to}. Valid next stages: ${valid}`
+    );
+  }
+};
+
+/**
+ * Get all valid next stages from a given pipeline stage.
+ */
+export const nextStages = (from: PipelineStage): PipelineStage[] => [
+  ...PIPELINE_TRANSITIONS[from],
 ];
 
 /**
- * Check whether a status is terminal (no further transitions possible).
+ * Check whether a stage is terminal.
+ */
+export const isTerminalStage = (stage: PipelineStage): boolean =>
+  PIPELINE_TRANSITIONS[stage].length === 0;
+
+/**
+ * Check whether a status is terminal.
  */
 export const isTerminal = (status: ProposalStatus): boolean =>
   TRANSITIONS[status].length === 0;

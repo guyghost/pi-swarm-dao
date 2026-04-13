@@ -68,6 +68,49 @@ export function restoreState(ctx: any): void {
       if (!a.kpis) a.kpis = [];
       if (!a.lastReviewDate) a.lastReviewDate = "2026-04-13";
     }
+
+    // Migrate state missing artefacts field (backward compatibility)
+    if (!currentState.artefacts) {
+      currentState.artefacts = {};
+    }
+
+    // Migrate proposals missing V2 fields
+    for (const p of currentState.proposals) {
+      // Migrate old type names to new
+      if ((p as any).type === "feature") p.type = "product-feature";
+      if ((p as any).type === "security") p.type = "security-change";
+      if ((p as any).type === "ux") p.type = "product-feature";
+      if ((p as any).type === "policy") p.type = "governance-change";
+      if ((p as any).type === "release") p.type = "release-change";
+
+      // Add missing pipeline stage
+      if (!(p as any).stage) {
+        (p as any).stage = "intake";
+      }
+
+      // Add missing risk zone
+      if (!(p as any).riskZone) {
+        (p as any).riskZone = "green";
+      }
+    }
+
+    // Migrate config missing typeQuorum
+    if (!(currentState.config as any).typeQuorum) {
+      (currentState.config as any).typeQuorum = {
+        "product-feature": { quorumPercent: 60, approvalPercent: 55, description: "Product Roadmap" },
+        "security-change": { quorumPercent: 75, approvalPercent: 70, description: "Security-sensitive" },
+        "technical-change": { quorumPercent: 60, approvalPercent: 55, description: "Technical / Architecture" },
+        "release-change": { quorumPercent: 50, approvalPercent: 51, description: "Routine Release" },
+        "governance-change": { quorumPercent: 70, approvalPercent: 66, description: "Governance / Policy" },
+      };
+    }
+
+    // Migrate agents missing councils
+    for (const a of currentState.agents) {
+      if (!a.councils) {
+        a.councils = [];
+      }
+    }
   }
 
   if (!restored) {

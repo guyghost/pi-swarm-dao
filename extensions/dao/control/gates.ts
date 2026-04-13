@@ -35,10 +35,10 @@ const getTypeSpecificSeverity = (
   baseSeverity: GateResult["severity"],
   proposalType: ProposalType
 ): GateResult["severity"] => {
-  if (proposalType === "security" && gateId === "risk-threshold" && baseSeverity === "warning") {
+  if (proposalType === "security-change" && gateId === "risk-threshold" && baseSeverity === "warning") {
     return "blocker";
   }
-  if (proposalType === "release" && gateId === "delivery-feasibility" && baseSeverity === "warning") {
+  if (proposalType === "release-change" && gateId === "delivery-feasibility" && baseSeverity === "warning") {
     return "blocker";
   }
   return baseSeverity;
@@ -232,6 +232,53 @@ const gateRegistryCompliance = (_proposal: Proposal): GateResult => {
 
 // ── Gate Registry ────────────────────────────────────────────
 
+/**
+ * zone-compliance: Verify risk zone compliance.
+ * Red zone requires security review and formal vote.
+ */
+const gateZoneCompliance = (proposal: Proposal): GateResult => {
+  const zone = proposal.riskZone ?? "green";
+
+  if (zone === "red") {
+    // Red zone: check if critic voted for (proxy for security review)
+    const criticVote = proposal.votes.find((v) => v.agentId === "critic");
+    const criticApproved = criticVote?.position === "for";
+
+    return {
+      gateId: "zone-compliance",
+      name: "Zone Compliance",
+      passed: criticApproved,
+      severity: "blocker",
+      message: criticApproved
+        ? "🔴 Red zone — security review passed (Critic approved)"
+        : "🔴 Red zone — requires security approval. Critic agent must vote for.",
+      details: { zone, criticApproved },
+    };
+  }
+
+  if (zone === "orange") {
+    return {
+      gateId: "zone-compliance",
+      name: "Zone Compliance",
+      passed: true,
+      severity: "warning",
+      message: "🟠 Orange zone — council review recommended",
+      details: { zone },
+    };
+  }
+
+  return {
+    gateId: "zone-compliance",
+    name: "Zone Compliance",
+    passed: true,
+    severity: "info",
+    message: "🟢 Green zone — standard approval flow",
+    details: { zone },
+  };
+};
+
+// ── Gate Registry (continued) ────────────────────────────────
+
 type GateFn = (proposal: Proposal) => GateResult;
 
 const GATES: Record<string, GateFn> = {
@@ -241,6 +288,7 @@ const GATES: Record<string, GateFn> = {
   "spec-completeness": gateSpecCompleteness,
   "delivery-feasibility": gateDeliveryFeasibility,
   "agent-registry-compliance": gateRegistryCompliance,
+  "zone-compliance": gateZoneCompliance,
 };
 
 // ── Public API ───────────────────────────────────────────────

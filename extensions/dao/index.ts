@@ -6,16 +6,19 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
 
 // Types
-import type { ProposalType, AgentRiskLevel } from "./types.js";
-import { PROPOSAL_TYPES } from "./types.js";
+import type { ProposalType, AgentRiskLevel, DAOArtefacts, ProposalContent, CompositeScore } from "./types.js";
+import { PROPOSAL_TYPES, PROPOSAL_TYPE_LABELS } from "./types.js";
 
 // Layer 1: Governance
 import {
   createProposal, getProposal, listProposals, updateProposalStatus,
-  storeDeliberationResults, storeExecutionResult, formatProposal,
+  storeDeliberationResults, storeExecutionResult, storeCompositeScore, formatProposal,
 } from "./governance/proposals.js";
 import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./governance/voting.js";
 import { assertTransition, statusLabel } from "./governance/lifecycle.js";
+import { calculateCompositeScore, parseScoresFromOutput, applyMalus, formatCompositeScore } from "./governance/scoring.js";
+import { classifyRiskZone, formatZoneClassification } from "./governance/zones.js";
+import { validateCouncilApproval, formatCouncilInfo } from "./governance/councils.js";
 
 // Layer 2: Intelligence
 import { initializeAgents, addAgent, removeAgent, getAgent, listAgents, formatAgentsTable, formatAgentCard, formatRegistryTable } from "./intelligence/agents.js";
@@ -25,7 +28,18 @@ import { synthesize } from "./intelligence/synthesis.js";
 // Layer 3: Delivery
 import { executeProposal } from "./delivery/execution.js";
 import { parseDeliveryPlan, storePlan, getPlan, formatPlan } from "./delivery/plan.js";
-import { generateReleaseNotes, generateChangelog } from "./delivery/artifacts.js";
+import {
+  generateAllArtefacts,
+  formatAllArtefacts,
+  formatArtefactsSummary,
+  formatDecisionBrief,
+  formatADR,
+  formatRiskReport,
+  formatPRDLite,
+  formatImplementationPlan,
+  formatTestPlan,
+  formatReleasePacket,
+} from "./delivery/artefacts.js";
 
 // Layer 4: Control
 import { runGates } from "./control/gates.js";
@@ -92,13 +106,16 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- Agent risk profile: ${riskSummary}`;
 
     daoContext += `\n\nYou have access to DAO governance tools:`;
-    daoContext += `\n- \`dao_propose\` → create proposals (types: feature, security, ux, release, policy)`;
-    daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote`;
+    daoContext += `\n- \`dao_propose\` → create proposals (types: product-feature, security-change, technical-change, release-change, governance-change)`;
+    daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote + composite scoring`;
     daoContext += `\n- \`dao_check\` → run control gates on approved proposals before execution`;
     daoContext += `\n- \`dao_plan\` → generate structured delivery plan`;
     daoContext += `\n- \`dao_execute\` → execute controlled/approved proposals`;
+    daoContext += `\n- \`dao_artefacts\` → view auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet)`;
     daoContext += `\n- \`dao_audit\` → view full audit trail`;
-    daoContext += `\n\nAvailable proposal types: feature (✨ new functionality), security (🔒 permissions/access), ux (🎨 UI/UX), release (📦 publication/rollback), policy (📜 governance rules).`;
+    daoContext += `\n\nAvailable proposal types: product-feature (✨), security-change (🔒), technical-change (⚙️), release-change (📦), governance-change (📜).`;
+    daoContext += `\nEach type has per-type quorum thresholds and maps to a council (product-council, security-council, delivery-council, governance-council).`;
+    daoContext += `\nRisk zones: 🟢 Green (auto-approve), 🟠 Orange (council review), 🔴 Red (formal vote + security).`;
 
     return {
       systemPrompt: event.systemPrompt + daoContext,
@@ -250,29 +267,64 @@ export default function daoExtension(pi: ExtensionAPI) {
     name: "dao_propose",
     label: "DAO Propose",
     description:
-      "Create a new typed proposal for the DAO to deliberate on. Every proposal must have a type (feature, security, ux, release, or policy). Provide a title, type, detailed description, and optional context.",
+      "Create a new typed proposal for the DAO to deliberate on. Every proposal must have a type. Provide structured fields for a well-defined proposal object.",
     parameters: Type.Object({
       title: Type.String({ description: "Short title for the proposal" }),
-      type: StringEnum(["feature", "security", "ux", "release", "policy"], {
-        description: "Type of proposal: feature, security, ux, release, or policy",
+      type: StringEnum(["product-feature", "security-change", "technical-change", "release-change", "governance-change"], {
+        description: "Type: product-feature, security-change, technical-change, release-change, governance-change",
       }),
-      description: Type.String({ description: "Detailed description of what is being proposed" }),
+      description: Type.String({ description: "Detailed description / problem statement" }),
       context: Type.Optional(Type.String({ description: "Additional context (market data, constraints, etc.)" })),
+      // Structured V2 fields
+      problemStatement: Type.Optional(Type.String({ description: "What problem does this solve?" })),
+      targetUser: Type.Optional(Type.String({ description: "Who is the target user?" })),
+      expectedOutcome: Type.Optional(Type.String({ description: "What outcome is expected?" })),
+      successMetrics: Type.Optional(Type.Array(Type.String(), { description: "How will success be measured?" })),
+      scopeIn: Type.Optional(Type.Array(Type.String(), { description: "What is in scope?" })),
+      scopeOut: Type.Optional(Type.Array(Type.String(), { description: "What is out of scope?" })),
+      permissionsImpact: Type.Optional(Type.Array(Type.String(), { description: "What permissions/access changes?" })),
+      dataImpact: Type.Optional(Type.Array(Type.String(), { description: "What data/storage changes?" })),
+      risks: Type.Optional(Type.Array(Type.String(), { description: "What risks are identified?" })),
+      dependencies: Type.Optional(Type.Array(Type.String(), { description: "What dependencies exist?" })),
+      estimatedEffort: Type.Optional(Type.String({ description: "Estimated effort (e.g. '2 weeks')" })),
+      confidenceScore: Type.Optional(Type.Number({ description: "Confidence level 1-10", minimum: 1, maximum: 10 })),
     }),
-    promptSnippet: "dao_propose — Submit a new typed proposal (feature/security/ux/release/policy) for DAO deliberation",
+    promptSnippet: "dao_propose — Submit a new typed proposal for DAO deliberation",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = getState();
       if (!state.initialized) {
         return toolResult("DAO not initialized. Run `dao_setup` first.");
       }
 
+      // Build structured content from optional fields
+      const content: Partial<ProposalContent> = {};
+      if (params.problemStatement) content.problemStatement = params.problemStatement;
+      if (params.targetUser) content.targetUser = params.targetUser;
+      if (params.expectedOutcome) content.expectedOutcome = params.expectedOutcome;
+      if (params.successMetrics) content.successMetrics = params.successMetrics;
+      if (params.scopeIn) content.scopeIn = params.scopeIn;
+      if (params.scopeOut) content.scopeOut = params.scopeOut;
+      if (params.permissionsImpact) content.permissionsImpact = params.permissionsImpact;
+      if (params.dataImpact) content.dataImpact = params.dataImpact;
+      if (params.risks) content.risks = params.risks;
+      if (params.dependencies) content.dependencies = params.dependencies;
+      if (params.estimatedEffort) content.estimatedEffort = params.estimatedEffort;
+      if (params.confidenceScore) content.confidenceScore = params.confidenceScore;
+
+      const hasStructuredContent = Object.keys(content).length > 0;
+
       const proposal = createProposal(
         params.title,
-        params.type as ProposalType, // Safe: StringEnum validates at runtime
+        params.type as ProposalType,
         params.description,
         "user",
-        params.context
+        params.context,
+        hasStructuredContent ? content : undefined
       );
+
+      // Classify risk zone
+      const zone = classifyRiskZone(proposal);
+      proposal.riskZone = zone;
 
       // Audit: proposal created
       recordAudit(
@@ -280,11 +332,13 @@ export default function daoExtension(pi: ExtensionAPI) {
         "governance",
         "proposal_created",
         "user",
-        `Proposal "${params.title}" created by user`
+        `Proposal "${params.title}" created by user — zone: ${zone}`
       );
 
+      const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
+
       return toolResult(
-        `# Proposal #${proposal.id} Created\n\n${formatProposal(proposal)}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start the swarm deliberation.`
+        `# Proposal #${proposal.id} Created\n\n${formatProposal(proposal)}\n\n**Risk Zone:** ${zoneLabel}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start the swarm deliberation.`
       );
     },
   });
@@ -404,8 +458,24 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Synthesize all outputs
       const synthDoc = synthesize(agentOutputs, votes);
 
-      // Tally votes
-      const tally = tallyVotes(proposal.id, votes);
+      // Tally votes (with per-type quorum)
+      const tally = tallyVotes(proposal.id, votes, proposal.type);
+
+      // === COMPOSITE SCORING ===
+      const proposal_ = getProposal(params.proposalId)!; // re-fetch with outputs
+      const axes = parseScoresFromOutput(proposal_);
+      let compositeScore = calculateCompositeScore(axes);
+
+      // Apply malus for permissions/data impact
+      const content = proposal_.content;
+      if (content) {
+        compositeScore = applyMalus(compositeScore, content.permissionsImpact, content.dataImpact);
+      }
+      storeCompositeScore(proposal_.id, compositeScore);
+
+      // Classify risk zone
+      const zone = classifyRiskZone(proposal_);
+      proposal_.riskZone = zone;
 
       // Update proposal with results
       const finalStatus = tally.approved ? "approved" : "rejected";
@@ -427,7 +497,9 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       let nextStepHint = "";
       if (tally.approved) {
-        nextStepHint = "\n\n> **Next step:** Run `dao_check` to validate with control gates before execution.";
+        const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
+        nextStepHint = `\n\n> **Next step:** Run \`dao_check\` to validate with control gates before execution.`;
+        nextStepHint += `\n> **Risk Zone:** ${zoneLabel} | **Score:** ${compositeScore.weighted}/100`;
       }
 
       const resultText = [
@@ -437,6 +509,8 @@ export default function daoExtension(pi: ExtensionAPI) {
         `**Duration:** ${(durationMs / 1000).toFixed(1)}s`,
         "",
         tallyFormatted,
+        "",
+        formatCompositeScore(compositeScore),
         "",
         agentSummary,
         "",
@@ -471,8 +545,8 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult(`Proposal #${proposal.id} has not been deliberated on yet.`);
       }
 
-      const tally = tallyVotes(proposal.id, proposal.votes);
-      return toolResult(formatTallyResult(tally));
+      const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
+      return toolResult(formatTallyResult(tally, proposal.type));
     },
   });
 
@@ -528,6 +602,24 @@ export default function daoExtension(pi: ExtensionAPI) {
           "system",
           "All gates passed — proposal promoted to controlled"
         );
+
+        // === AUTO-GENERATE ALL 7 ARTEFACTS ===
+        const tally = tallyVotes(proposal.id, proposal.votes);
+        const existingPlan = getPlan(proposal.id);
+        const artefacts = generateAllArtefacts(proposal, tally, result, existingPlan);
+
+        // Store artefacts in state
+        const state = getState();
+        state.artefacts[proposal.id] = artefacts;
+        setState(state);
+
+        recordAudit(
+          proposal.id,
+          "control",
+          "artefacts_generated",
+          "system",
+          `7 artefacts auto-generated: Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet`
+        );
       }
 
       // Format output
@@ -560,6 +652,13 @@ export default function daoExtension(pi: ExtensionAPI) {
       if (result.allGatesPassed) {
         lines.push("");
         lines.push("> **Ready for execution.** Run `dao_plan` to generate a delivery plan, or `dao_execute` to proceed directly.");
+
+        // Show artefacts summary if generated
+        const storedArtefacts = getState().artefacts[proposal.id];
+        if (storedArtefacts) {
+          lines.push("");
+          lines.push(formatArtefactsSummary(storedArtefacts));
+        }
       } else {
         lines.push("");
         lines.push("> **Blocked.** Review the failing gates above. You may resolve issues and re-run `dao_check`, or proceed at your own risk.");
@@ -650,6 +749,84 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       return toolResult(formatPlan(plan));
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_artefacts — View generated artefacts
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_artefacts",
+    label: "DAO Artefacts",
+    description:
+      "View the 7 auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet) for an approved proposal. Artefacts are generated automatically when dao_check passes.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal" }),
+      artefact: Type.Optional(
+        StringEnum(
+          ["all", "decision-brief", "adr", "risk-report", "prd-lite", "implementation-plan", "test-plan", "release-packet"],
+          { description: "Specific artefact to view (default: all)" }
+        )
+      ),
+    }),
+    promptSnippet: "dao_artefacts — View auto-generated artefacts for approved proposals",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      const artefacts = state.artefacts[params.proposalId];
+
+      if (!artefacts) {
+        // Check if proposal exists
+        const proposal = getProposal(params.proposalId);
+        if (!proposal) {
+          return toolResult(`Proposal #${params.proposalId} not found.`);
+        }
+
+        if (proposal.status !== "controlled" && proposal.status !== "executed" && proposal.status !== "approved") {
+          return toolResult(
+            `No artefacts generated for proposal #${params.proposalId}. Run \`dao_check\` first to generate artefacts.`
+          );
+        }
+
+        // Generate artefacts on-the-fly if missing (e.g., proposal was approved but check not run)
+        const tally = tallyVotes(proposal.id, proposal.votes);
+        const plan = getPlan(proposal.id);
+        const control = state.controlResults[params.proposalId];
+        const newArtefacts = generateAllArtefacts(proposal, tally, control, plan);
+        state.artefacts[params.proposalId] = newArtefacts;
+        setState(state);
+
+        recordAudit(
+          proposal.id,
+          "control",
+          "artefacts_generated_lazy",
+          "system",
+          "7 artefacts generated on-demand via dao_artefacts"
+        );
+
+        return toolResult(formatAllArtefacts(newArtefacts));
+      }
+
+      const which = params.artefact ?? "all";
+
+      switch (which) {
+        case "decision-brief":
+          return toolResult(formatDecisionBrief(artefacts.decisionBrief));
+        case "adr":
+          return toolResult(formatADR(artefacts.adr));
+        case "risk-report":
+          return toolResult(formatRiskReport(artefacts.riskReport));
+        case "prd-lite":
+          return toolResult(formatPRDLite(artefacts.prdLite));
+        case "implementation-plan":
+          return toolResult(formatImplementationPlan(artefacts.implementationPlan));
+        case "test-plan":
+          return toolResult(formatTestPlan(artefacts.testPlan));
+        case "release-packet":
+          return toolResult(formatReleasePacket(artefacts.releasePacket));
+        default:
+          return toolResult(formatAllArtefacts(artefacts));
+      }
     },
   });
 

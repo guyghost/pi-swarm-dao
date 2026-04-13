@@ -76,6 +76,22 @@ export const renderDashboard = (state: DAOState): string => {
   lines.push("| 🚀 Delivery | Convert decisions into execution | Ready |");
   lines.push("");
 
+  // === Artefacts Status ===
+  const artefactProposalIds = Object.keys(state.artefacts).map(Number);
+  if (artefactProposalIds.length > 0) {
+    lines.push("## 📚 Artefacts");
+    lines.push("| Proposal | Type | Risk | Stories | Phases | Tests | Version |");
+    lines.push("|----------|------|------|---------|--------|-------|--------|");
+    for (const id of artefactProposalIds) {
+      const a = state.artefacts[id];
+      const p = state.proposals.find((p) => p.id === id);
+      lines.push(
+        `| #${id} ${p?.title ?? "?"} | ${typeEmoji(p?.type ?? "product-feature")} ${p?.type ?? "?"} | ${a.riskReport.overallRiskScore}/10 | ${a.prdLite.userStories.length} | ${a.implementationPlan.phases.length} | ${a.testPlan.unitTests.length}U/${a.testPlan.e2eTests.length}E | v${a.releasePacket.version} |`
+      );
+    }
+    lines.push("");
+  }
+
   // === Proposals ===
   lines.push("## 📋 Proposals");
   if (state.proposals.length === 0) {
@@ -88,8 +104,8 @@ export const renderDashboard = (state: DAOState): string => {
 
     if (open.length > 0) {
       lines.push("### Active");
-      lines.push("| # | Title | Type | Status | Proposed By |");
-      lines.push("|---|-------|------|--------|-------------|");
+      lines.push("| # | Title | Type | Status | Zone | Score | Stage | Proposed By |");
+      lines.push("|---|-------|------|--------|------|-------|-------|-------------|");
       for (const p of open) {
         const statusEmoji =
           p.status === "deliberating"
@@ -98,8 +114,12 @@ export const renderDashboard = (state: DAOState): string => {
               ? "🔒"
               : "📝";
         const typeBadge = `${typeEmoji(p.type)} ${p.type}`;
+        const zone = p.riskZone
+          ? p.riskZone === "red" ? "🔴" : p.riskZone === "orange" ? "🟠" : "🟢"
+          : "⚪";
+        const score = p.compositeScore ? `${p.compositeScore.weighted}` : "—";
         lines.push(
-          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${p.proposedBy} |`
+          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${zone} | ${score} | ${p.stage} | ${p.proposedBy} |`
         );
       }
       lines.push("");
@@ -107,8 +127,8 @@ export const renderDashboard = (state: DAOState): string => {
 
     if (resolved.length > 0) {
       lines.push("### Resolved");
-      lines.push("| # | Title | Type | Status | Resolved |");
-      lines.push("|---|-------|------|--------|----------|");
+      lines.push("| # | Title | Type | Status | Zone | Score | Resolved |");
+      lines.push("|---|-------|------|--------|------|-------|----------|");
       for (const p of resolved) {
         const statusEmoji =
           p.status === "approved"
@@ -121,8 +141,12 @@ export const renderDashboard = (state: DAOState): string => {
                   ? "🔒"
                   : "⚠️";
         const typeBadge = `${typeEmoji(p.type)} ${p.type}`;
+        const zone = p.riskZone
+          ? p.riskZone === "red" ? "🔴" : p.riskZone === "orange" ? "🟠" : "🟢"
+          : "⚪";
+        const score = p.compositeScore ? `${p.compositeScore.weighted}` : "—";
         lines.push(
-          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${p.resolvedAt?.split("T")[0] ?? "—"} |`
+          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${zone} | ${score} | ${p.resolvedAt?.split("T")[0] ?? "—"} |`
         );
       }
     }
@@ -260,7 +284,11 @@ export const renderHistory = (proposals: Proposal[]): string => {
                   : "⚠️";
 
     lines.push(`## ${statusEmoji} Proposal #${p.id}: ${typeEmoji(p.type)} ${p.title}`);
-    lines.push(`**Type:** ${typeEmoji(p.type)} ${p.type} | **Status:** ${p.status} | **By:** ${p.proposedBy} | **Created:** ${p.createdAt.split("T")[0]}`);
+    lines.push(`**Type:** ${typeEmoji(p.type)} ${p.type} | **Status:** ${p.status} | **Stage:** ${p.stage} | **By:** ${p.proposedBy} | **Created:** ${p.createdAt.split("T")[0]}`);
+    if (p.riskZone) {
+      const zoneLabel = p.riskZone === "red" ? "🔴 Red" : p.riskZone === "orange" ? "🟠 Orange" : "🟢 Green";
+      lines.push(`**Zone:** ${zoneLabel}` + (p.compositeScore ? ` | **Score:** ${p.compositeScore.weighted}/100` : ""));
+    }
     if (p.resolvedAt) {
       lines.push(`**Resolved:** ${p.resolvedAt.split("T")[0]}`);
     }

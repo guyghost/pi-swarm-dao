@@ -1,78 +1,207 @@
 // ============================================================
-// pi-swarm-dao — Type Definitions
+// pi-swarm-dao — Type Definitions (V2 Governance)
 // ============================================================
 
-/** Typed proposal categories */
-export type ProposalType = "feature" | "security" | "ux" | "release" | "policy";
+// ── Proposal Types ───────────────────────────────────────────
+
+/** Typed proposal categories — each maps to a council and approval flow */
+export type ProposalType =
+  | "product-feature"
+  | "security-change"
+  | "technical-change"
+  | "release-change"
+  | "governance-change";
 
 /** All valid proposal types */
-export const PROPOSAL_TYPES: ProposalType[] = ["feature", "security", "ux", "release", "policy"];
+export const PROPOSAL_TYPES: ProposalType[] = [
+  "product-feature",
+  "security-change",
+  "technical-change",
+  "release-change",
+  "governance-change",
+];
 
 /** Human-readable labels for proposal types */
 export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
-  feature: "✨ Feature",
-  security: "🔒 Security",
-  ux: "🎨 UX",
-  release: "📦 Release",
-  policy: "📜 Policy",
+  "product-feature": "✨ Product Feature",
+  "security-change": "🔒 Security Change",
+  "technical-change": "⚙️ Technical Change",
+  "release-change": "📦 Release Change",
+  "governance-change": "📜 Governance Change",
 };
 
-/** Agent risk classification */
-export type AgentRiskLevel = "low" | "medium" | "high" | "critical";
+/** Council responsible for each proposal type */
+export type Council =
+  | "product-council"
+  | "security-council"
+  | "delivery-council"
+  | "governance-council";
 
-/** Condition under which an agent should stop */
-export interface StopCondition {
-  type: "timeout" | "error" | "threshold" | "manual";
+/** Map proposal type → responsible council */
+export const PROPOSAL_COUNCIL: Record<ProposalType, Council[]> = {
+  "product-feature": ["product-council"],
+  "security-change": ["security-council"],
+  "technical-change": ["product-council", "delivery-council"],
+  "release-change": ["delivery-council", "security-council"],
+  "governance-change": ["governance-council"],
+};
+
+// ── Risk Zones ───────────────────────────────────────────────
+
+/** Risk zone classification — determines approval process */
+export type RiskZone = "green" | "orange" | "red";
+
+/** Risk zone definitions */
+export const RISK_ZONE_LABELS: Record<RiskZone, string> = {
+  green: "🟢 Green",
+  orange: "🟠 Orange",
+  red: "🔴 Red",
+};
+
+/** Risk zone criteria and process descriptions */
+export const RISK_ZONE_DEFINITIONS: Record<RiskZone, {
+  criteria: string;
+  process: string;
+  humanApprovals: number;
+  requiresSecurityReview: boolean;
+  requiresFormalVote: boolean;
+}> = {
+  green: {
+    criteria: "Minor UI, docs, text, light instrumentation",
+    process: "Agent auto-approval + async human review",
+    humanApprovals: 1,
+    requiresSecurityReview: false,
+    requiresFormalVote: false,
+  },
+  orange: {
+    criteria: "Non-trivial features, moderate refactors, limited new integrations",
+    process: "Council review + QA checklist",
+    humanApprovals: 2,
+    requiresSecurityReview: false,
+    requiresFormalVote: false,
+  },
+  red: {
+    criteria: "New permissions, multi-site access, auth, sensitive storage, store publication",
+    process: "Security Council + reinforced quorum + final human approval",
+    humanApprovals: 2,
+    requiresSecurityReview: true,
+    requiresFormalVote: true,
+  },
+};
+
+// ── Per-Type Quorum Configuration ───────────────────────────
+
+/** Quorum settings per proposal type */
+export interface TypeQuorumConfig {
+  quorumPercent: number;
+  approvalPercent: number;
   description: string;
-  value?: string; // e.g. "30s" for timeout, "3" for retry threshold
 }
 
-/** Key Performance Indicator for an agent */
-export interface AgentKPI {
-  name: string;
-  description: string;
-  target: string; // e.g. "< 30s", "> 80%", "100%"
+export const TYPE_QUORUM: Record<ProposalType, TypeQuorumConfig> = {
+  "governance-change": { quorumPercent: 70, approvalPercent: 66, description: "Governance / Policy" },
+  "product-feature":   { quorumPercent: 60, approvalPercent: 55, description: "Product Roadmap" },
+  "security-change":   { quorumPercent: 75, approvalPercent: 70, description: "Security-sensitive" },
+  "technical-change":  { quorumPercent: 60, approvalPercent: 55, description: "Technical / Architecture" },
+  "release-change":    { quorumPercent: 50, approvalPercent: 51, description: "Routine Release" },
+};
+
+// ── Pipeline Stages ──────────────────────────────────────────
+
+/**
+ * 10-stage pipeline:
+ * intake → qualification → analysis → critique → scoring →
+ * council → vote → spec → execution-gate → postmortem
+ */
+export type PipelineStage =
+  | "intake"
+  | "qualification"
+  | "analysis"
+  | "critique"
+  | "scoring"
+  | "council"
+  | "vote"
+  | "spec"
+  | "execution-gate"
+  | "postmortem";
+
+export const PIPELINE_STAGES: PipelineStage[] = [
+  "intake",
+  "qualification",
+  "analysis",
+  "critique",
+  "scoring",
+  "council",
+  "vote",
+  "spec",
+  "execution-gate",
+  "postmortem",
+];
+
+export const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
+  intake: "📋 Intake",
+  qualification: "🔍 Qualification",
+  analysis: "🧪 Analysis",
+  critique: "🔎 Critique",
+  scoring: "📊 Scoring",
+  council: "🏛️ Council",
+  vote: "🗳️ Vote",
+  spec: "📝 Spec",
+  "execution-gate": "🛡️ Execution Gate",
+  postmortem: "📖 Postmortem",
+};
+
+// ── Composite Scoring ────────────────────────────────────────
+
+/** Individual axis scores (0-10) */
+export interface AxisScore {
+  userImpact: number;     // 30% — value for end user
+  businessImpact: number; // 20% — adoption, retention, differentiation
+  effort: number;         // 15% — build & maintenance complexity (inverted)
+  securityRisk: number;   // 20% — permissions, data, attack surface (inverted)
+  confidence: number;     // 15% — evidence quality, analysis coherence
 }
 
-/** Configuration for a DAO agent */
-export interface DAOAgent {
-  id: string;
-  name: string;
-  role: string;
-  description: string;
-  weight: number; // Vote weight (1-10)
-  systemPrompt: string;
-  model?: string; // LLM model override
-  tools?: string[]; // Allowed tools for this agent (authorizedTools)
+/** Weights for each scoring axis */
+export const SCORING_WEIGHTS: Record<keyof AxisScore, number> = {
+  userImpact: 0.30,
+  businessImpact: 0.20,
+  effort: 0.15,
+  securityRisk: 0.20,
+  confidence: 0.15,
+};
 
-  // === Registry Fields ===
-  owner?: string;                    // Who is responsible (default: "system")
-  mission?: string;                  // Clear objective (distinct from description)
-  authorizedInputs?: string[];       // Types of data the agent can receive
-  authorizedData?: string[];         // Data the agent can access
-  riskLevel?: AgentRiskLevel;        // Risk classification
-  authorizedEnvironments?: string[]; // Where the agent can run
-  stopConditions?: StopCondition[];  // When the agent should stop
-  kpis?: AgentKPI[];                 // Performance metrics
-  lastReviewDate?: string;           // ISO 8601 date
+/** Composite score result */
+export interface CompositeScore {
+  axes: AxisScore;
+  weighted: number;      // 0-100 final score
+  riskZone: RiskZone;    // derived from score + permissions
+  breakdown: string;     // human-readable formula
 }
 
-/** A proposal submitted to the DAO for deliberation */
-export interface Proposal {
-  id: number;
+// ── Structured Proposal Content ──────────────────────────────
+
+/** Mandatory structured fields for every proposal */
+export interface ProposalContent {
   title: string;
   type: ProposalType;
-  description: string;
-  context?: string; // Additional context
-  proposedBy: string; // Agent ID or "user"
-  status: ProposalStatus;
-  votes: Vote[];
-  agentOutputs: AgentOutput[];
-  synthesis?: string; // Facilitator synthesis document
-  executionResult?: string;
-  createdAt: string; // ISO 8601
-  resolvedAt?: string; // ISO 8601
+  problemStatement: string;
+  targetUser: string;
+  expectedOutcome: string;
+  successMetrics: string[];
+  scopeIn: string[];
+  scopeOut: string[];
+  permissionsImpact: string[];
+  dataImpact: string[];
+  technicalOptions: string[];
+  risks: string[];
+  dependencies: string[];
+  estimatedEffort: string;  // e.g. "2 weeks", "3-5 days"
+  confidenceScore: number;  // 1-10
+  recommendedDecision: string;
 }
+
+// ── Proposal Status (backward compat with lifecycle) ─────────
 
 export type ProposalStatus =
   | "open"
@@ -83,37 +212,139 @@ export type ProposalStatus =
   | "executed"
   | "failed";
 
+// ── Core Domain Types ────────────────────────────────────────
+
+/** Agent risk classification */
+export type AgentRiskLevel = "low" | "medium" | "high" | "critical";
+
+/** Condition under which an agent should stop */
+export interface StopCondition {
+  type: "timeout" | "error" | "threshold" | "manual";
+  description: string;
+  value?: string;
+}
+
+/** Key Performance Indicator for an agent */
+export interface AgentKPI {
+  name: string;
+  description: string;
+  target: string;
+}
+
+/** Council membership for an agent */
+export interface CouncilMembership {
+  council: Council;
+  role: "lead" | "member" | "advisor";
+}
+
+/** Configuration for a DAO agent */
+export interface DAOAgent {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  weight: number;
+  systemPrompt: string;
+  model?: string;
+  tools?: string[];
+
+  // Registry Fields
+  owner?: string;
+  mission?: string;
+  authorizedInputs?: string[];
+  authorizedData?: string[];
+  riskLevel?: AgentRiskLevel;
+  authorizedEnvironments?: string[];
+  stopConditions?: StopCondition[];
+  kpis?: AgentKPI[];
+  lastReviewDate?: string;
+
+  // Council memberships
+  councils?: CouncilMembership[];
+}
+
+/** A proposal submitted to the DAO for deliberation */
+export interface Proposal {
+  id: number;
+  title: string;
+  type: ProposalType;
+  description: string;         // Legacy: free-form description (now derived from problemStatement)
+  context?: string;
+
+  // Structured content (V2)
+  content?: ProposalContent;
+
+  // Risk & Scoring
+  riskZone?: RiskZone;
+  compositeScore?: CompositeScore;
+
+  // Pipeline
+  stage: PipelineStage;
+
+  proposedBy: string;
+  status: ProposalStatus;
+  votes: Vote[];
+  agentOutputs: AgentOutput[];
+  synthesis?: string;
+  executionResult?: string;
+
+  // Postmortem
+  postmortem?: Postmortem;
+
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+/** Postmortem journal entry */
+export interface Postmortem {
+  outcome: "success" | "partial" | "failed";
+  metrics: { name: string; expected: string; actual: string }[];
+  learnings: string[];
+  followUpActions: string[];
+  recordedAt: string;
+  recordedBy: string;
+}
+
+export type VotePosition = "for" | "against" | "abstain";
+
 /** A vote cast by an agent */
 export interface Vote {
   agentId: string;
   agentName: string;
   position: VotePosition;
   reasoning: string;
-  weight: number; // Agent's weight at time of vote
+  weight: number;
 }
-
-export type VotePosition = "for" | "against" | "abstain";
 
 /** Output from a single agent during deliberation */
 export interface AgentOutput {
   agentId: string;
   agentName: string;
   role: string;
-  content: string; // Full markdown output
-  vote?: Vote; // Parsed vote from output
+  content: string;
+  vote?: Vote;
   durationMs: number;
-  error?: string; // If agent failed
+  error?: string;
 }
+
+// ── Configuration ────────────────────────────────────────────
+
+/** Per-type quorum overrides */
+export type TypeQuorumMap = Partial<Record<ProposalType, TypeQuorumConfig>>;
 
 /** DAO configuration */
 export interface DAOConfig {
-  quorumPercent: number; // Min participation % (default: 60)
-  approvalThreshold: number; // Min weighted "for" % to approve (default: 51)
-  defaultModel: string; // Default LLM model for sub-agents
-  maxConcurrent: number; // Max parallel sub-agents (default: 4)
-  riskThreshold: number; // Proposals with risk score >= this require extra review (default: 7)
-  requiredGates: string[]; // Gate IDs that must pass before execution
+  quorumPercent: number;
+  approvalThreshold: number;
+  defaultModel: string;
+  maxConcurrent: number;
+  riskThreshold: number;
+  requiredGates: string[];
+  /** Per-type quorum overrides (falls back to quorumPercent/approvalThreshold if not set) */
+  typeQuorum: TypeQuorumMap;
 }
+
+// ── State ────────────────────────────────────────────────────
 
 /** Complete DAO state — persisted between sessions */
 export interface DAOState {
@@ -126,6 +357,7 @@ export interface DAOState {
   nextAuditId: number;
   controlResults: Record<number, ControlCheckResult>;
   deliveryPlans: Record<number, DeliveryPlan>;
+  artefacts: Record<number, DAOArtefacts>;
 }
 
 /** Result of a vote tally */
@@ -134,12 +366,12 @@ export interface TallyResult {
   approved: boolean;
   quorumMet: boolean;
   totalAgents: number;
-  votingAgents: number; // Excluding abstentions
-  quorumPercent: number; // Actual participation %
+  votingAgents: number;
+  quorumPercent: number;
   weightedFor: number;
   weightedAgainst: number;
   totalVotingWeight: number;
-  approvalScore: number; // weightedFor / totalVotingWeight (0-1)
+  approvalScore: number;
   votes: Vote[];
 }
 
@@ -155,24 +387,22 @@ export interface DeliberationResult {
 }
 
 // ============================================================
-// Control Layer — Quality Gates, Audit Trail, Checklists
+// Control Layer
 // ============================================================
 
-/** Single entry in the immutable audit trail */
 export interface AuditEntry {
   id: number;
-  timestamp: string; // ISO 8601
+  timestamp: string;
   proposalId: number;
   layer: "governance" | "intelligence" | "delivery" | "control";
-  action: string; // e.g. "proposal_created", "vote_cast", "gate_passed", "checklist_completed"
-  actor: string; // agent ID or "system" or "user"
-  details: string; // Human-readable description
+  action: string;
+  actor: string;
+  details: string;
   metadata?: Record<string, any>;
 }
 
-/** Result of a single quality gate evaluation */
 export interface GateResult {
-  gateId: string; // e.g. "risk-threshold", "quorum-quality", "security-review"
+  gateId: string;
   name: string;
   passed: boolean;
   severity: "blocker" | "warning" | "info";
@@ -180,7 +410,6 @@ export interface GateResult {
   details?: Record<string, any>;
 }
 
-/** Aggregate result of all control checks for a proposal */
 export interface ControlCheckResult {
   proposalId: number;
   timestamp: string;
@@ -191,32 +420,117 @@ export interface ControlCheckResult {
   checklist: ChecklistItem[];
 }
 
-/** A single checklist item in the control layer */
 export interface ChecklistItem {
   id: string;
   category: "security" | "compliance" | "quality" | "operational";
   label: string;
   checked: boolean;
-  autoChecked: boolean; // true if system verified, false if manual
+  autoChecked: boolean;
   details?: string;
 }
 
 // ============================================================
-// Delivery Layer — Execution Plans, Tasks, Phases
+// Artefacts
 // ============================================================
 
-/** A single task within a delivery phase */
+export interface DecisionBrief {
+  proposalId: number;
+  title: string;
+  type: ProposalType;
+  objective: string;
+  summary: string;
+  approvalScore: number;
+  quorumPercent: number;
+  decision: "approved" | "rejected";
+  date: string;
+  keyAgents: { name: string; position: VotePosition; weight: number }[];
+}
+
+export interface ADR {
+  proposalId: number;
+  adrId: string;
+  title: string;
+  status: "proposed" | "accepted" | "deprecated" | "superseded";
+  context: string;
+  decision: string;
+  options: { name: string; description: string; selected: boolean; pros: string[]; cons: string[] }[];
+  consequences: string[];
+  rejectedAlternatives: string[];
+}
+
+export interface RiskReport {
+  proposalId: number;
+  overallRiskScore: number;
+  riskLevel: AgentRiskLevel;
+  risks: { category: string; description: string; severity: "low" | "medium" | "high" | "critical"; likelihood: "low" | "medium" | "high"; mitigation: string }[];
+  permissions: string[];
+  dataSurfaces: string[];
+  guardrails: string[];
+}
+
+export interface PRDLite {
+  proposalId: number;
+  objective: string;
+  userStories: { id: string; title: string; asA: string; iWant: string; soThat: string; acceptanceCriteria: string[] }[];
+  inScope: string[];
+  outOfScope: string[];
+  metrics: { name: string; baseline: string; target: string }[];
+  openQuestions: string[];
+}
+
+export interface ImplementationPlan {
+  proposalId: number;
+  phases: { number: number; name: string; tasks: { id: string; title: string; effort: string; dependencies: string[] }[] }[];
+  branchStrategy: string;
+  estimatedDuration: string;
+  criticalPath: string[];
+}
+
+export interface TestPlan {
+  proposalId: number;
+  unitTests: { target: string; description: string }[];
+  integrationTests: { target: string; description: string }[];
+  e2eTests: { scenario: string; steps: string }[];
+  nonRegressionChecks: string[];
+  testEnvironments: string[];
+}
+
+export interface ReleasePacket {
+  proposalId: number;
+  version: string;
+  changelog: string;
+  releaseNotes: string;
+  preReleaseChecklist: { item: string; checked: boolean }[];
+  rollbackPlan: string;
+  storeNotes: string;
+}
+
+export interface DAOArtefacts {
+  proposalId: number;
+  generatedAt: string;
+  decisionBrief: DecisionBrief;
+  adr: ADR;
+  riskReport: RiskReport;
+  prdLite: PRDLite;
+  implementationPlan: ImplementationPlan;
+  testPlan: TestPlan;
+  releasePacket: ReleasePacket;
+}
+
+// ============================================================
+// Delivery Layer
+// ============================================================
+
 export interface DeliveryTask {
   id: string;
   title: string;
   description: string;
   effort: "xs" | "s" | "m" | "l" | "xl";
   phase: number;
-  dependencies: string[]; // task IDs
+  dependencies: string[];
   status: "pending" | "in_progress" | "done";
 }
 
-/** A phase within a delivery plan */
 export interface DeliveryPhase {
   number: number;
   name: string;
@@ -224,7 +538,6 @@ export interface DeliveryPhase {
   duration: string;
 }
 
-/** Full delivery plan for an approved proposal */
 export interface DeliveryPlan {
   proposalId: number;
   createdAt: string;
@@ -234,14 +547,19 @@ export interface DeliveryPlan {
   estimatedDuration: string;
 }
 
+// ============================================================
+// Defaults
+// ============================================================
+
 /** Default DAO configuration */
 export const DEFAULT_CONFIG: DAOConfig = {
   quorumPercent: 60,
-  approvalThreshold: 51,
+  approvalThreshold: 55,
   defaultModel: "z.ai/GLM-5.1",
   maxConcurrent: 4,
   riskThreshold: 7,
-  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus"],
+  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance"],
+  typeQuorum: TYPE_QUORUM,
 };
 
 /** Create an empty initial state */
@@ -249,12 +567,13 @@ export function createInitialState(): DAOState {
   return {
     agents: [],
     proposals: [],
-    config: { ...DEFAULT_CONFIG },
+    config: { ...DEFAULT_CONFIG, typeQuorum: { ...TYPE_QUORUM } },
     nextProposalId: 1,
     initialized: false,
     auditLog: [],
     nextAuditId: 1,
     controlResults: {},
     deliveryPlans: {},
+    artefacts: {},
   };
 }
