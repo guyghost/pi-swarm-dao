@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { DAOAgent, Proposal, AgentOutput } from "./types.js";
-import { getState } from "./persistence.js";
-import { extractAssistantMessage } from "./pi-json.js";
+import type { DAOAgent, Proposal, AgentOutput } from "../types.js";
+import { getState } from "../persistence.js";
+import { extractAssistantMessage } from "../pi-json.js";
 
 /**
  * Run a concurrency-limited map over an array.

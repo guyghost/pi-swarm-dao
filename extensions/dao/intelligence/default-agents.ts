@@ -1,4 +1,4 @@
-import type { DAOAgent } from "./types.js";
+import type { DAOAgent } from "../types.js";
 
 export const DEFAULT_AGENTS: DAOAgent[] = [
   {

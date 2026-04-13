@@ -1,4 +1,4 @@
-import type { AgentOutput, Vote } from "./types.js";
+import type { AgentOutput, Vote } from "../types.js";
 
 /**
  * Remove the ## Vote section from agent output

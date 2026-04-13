@@ -2,18 +2,31 @@
   "name": "pi-swarm-dao",
   "version": "0.1.0",
   "description": "A DAO extension for Pi coding agent — 7 specialized AI agents deliberate on proposals via weighted voting",
-  "keywords": ["pi-package", "dao", "swarm", "agents", "governance"],
+  "keywords": [
+    "pi-package",
+    "dao",
+    "swarm",
+    "agents",
+    "governance"
+  ],
   "license": "MIT",
   "author": "guy",
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
   }
 }

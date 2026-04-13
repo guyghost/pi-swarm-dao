@@ -1,5 +1,5 @@
-import type { Vote, VotePosition, TallyResult } from "./types.js";
-import { getState } from "./persistence.js";
+import type { Vote, VotePosition, TallyResult } from "../types.js";
+import { getState } from "../persistence.js";
 
 /**
  * Parse a vote from an agent's markdown output.

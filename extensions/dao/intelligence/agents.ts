@@ -1,5 +1,5 @@
-import type { DAOAgent } from "./types.js";
-import { getState, setState } from "./persistence.js";
+import type { DAOAgent } from "../types.js";
+import { getState, setState } from "../persistence.js";
 import { DEFAULT_AGENTS } from "./default-agents.js";
 
 /**

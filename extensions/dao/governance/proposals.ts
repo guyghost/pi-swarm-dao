@@ -1,5 +1,5 @@
-import type { Proposal, ProposalStatus } from "./types.js";
-import { getState, setState } from "./persistence.js";
+import type { Proposal, ProposalStatus } from "../types.js";
+import { getState, setState } from "../persistence.js";
 
 /**
  * Create a new proposal.
@@ -80,9 +80,9 @@ export const updateProposalStatus = (
  */
 export const storeDeliberationResults = (
   id: number,
-  agentOutputs: import("./types.js").AgentOutput[],
+  agentOutputs: import("../types.js").AgentOutput[],
   synthesis: string,
-  votes: import("./types.js").Vote[]
+  votes: import("../types.js").Vote[]
 ): Proposal => {
   const state = getState();
   const proposal = state.proposals.find((p) => p.id === id);

@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Proposal, DAOAgent } from "./types.js";
-import { getState } from "./persistence.js";
-import { getAgent } from "./agents.js";
-import { extractAssistantMessage } from "./pi-json.js";
+import type { Proposal, DAOAgent } from "../types.js";
+import { getState } from "../persistence.js";
+import { getAgent } from "../intelligence/agents.js";
+import { extractAssistantMessage } from "../pi-json.js";
 
 /**
  * Execute an approved proposal by delegating to the Delivery Agent

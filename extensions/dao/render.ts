@@ -3,6 +3,9 @@ import type {
   Proposal,
   TallyResult,
   AgentOutput,
+  ControlCheckResult,
+  DeliveryPlan,
+  ChecklistItem,
 } from "./types.js";
 
 /**
@@ -44,6 +47,16 @@ export const renderDashboard = (state: DAOState): string => {
   }
   lines.push("");
 
+  // === Architecture ===
+  lines.push("## 🏗️ Architecture");
+  lines.push("| Layer | Mission | Status |");
+  lines.push("|-------|---------|--------|");
+  lines.push("| 🗳️ Governance | Decide what enters the roadmap | Active |");
+  lines.push(`| 🧠 Intelligence | Produce analysis and recommendations | ${state.agents.length} agents |`);
+  lines.push(`| 🛡️ Control | Reduce risk before publication | ${state.config.requiredGates.length} gates configured |`);
+  lines.push("| 🚀 Delivery | Convert decisions into execution | Ready |");
+  lines.push("");
+
   // === Proposals ===
   lines.push("## 📋 Proposals");
   if (state.proposals.length === 0) {
@@ -59,7 +72,12 @@ export const renderDashboard = (state: DAOState): string => {
       lines.push("| # | Title | Status | Proposed By |");
       lines.push("|---|-------|--------|-------------|");
       for (const p of open) {
-        const statusEmoji = p.status === "deliberating" ? "🗳️" : "📝";
+        const statusEmoji =
+          p.status === "deliberating"
+            ? "🗳️"
+            : p.status === "controlled"
+              ? "🔒"
+              : "📝";
         lines.push(
           `| ${p.id} | ${p.title} | ${statusEmoji} ${p.status} | ${p.proposedBy} |`
         );
@@ -79,7 +97,9 @@ export const renderDashboard = (state: DAOState): string => {
               ? "❌"
               : p.status === "executed"
                 ? "🚀"
-                : "⚠️";
+                : p.status === "controlled"
+                  ? "🔒"
+                  : "⚠️";
         lines.push(
           `| ${p.id} | ${p.title} | ${statusEmoji} ${p.status} | ${p.resolvedAt?.split("T")[0] ?? "—"} |`
         );
@@ -100,6 +120,72 @@ export const renderDeliberationProgress = (
 ): string => {
   const bar = "█".repeat(completed) + "░".repeat(total - completed);
   return `Deliberating [${bar}] ${completed}/${total} — ${lastAgent} done`;
+};
+
+/**
+ * Render a control check result as markdown.
+ */
+export const renderControlResult = (result: ControlCheckResult): string => {
+  const lines: string[] = [];
+
+  lines.push(`## 🛡️ Control Check — Proposal #${result.proposalId}`);
+  lines.push("");
+
+  if (result.allGatesPassed) {
+    lines.push("**Overall:** ✅ All gates passed");
+  } else {
+    lines.push(
+      `**Overall:** ❌ ${result.blockerCount} blocker(s), ${result.warningCount} warning(s)`
+    );
+  }
+  lines.push("");
+
+  lines.push("### Gates");
+  lines.push("| Gate | Status | Severity | Message |");
+  lines.push("|------|--------|----------|---------|");
+
+  for (const gate of result.gates) {
+    const status = gate.passed ? "✅" : "❌";
+    lines.push(
+      `| ${gate.name} | ${status} | ${gate.severity} | ${gate.message} |`
+    );
+  }
+
+  if (result.checklist.length > 0) {
+    lines.push("");
+    lines.push("### Checklist");
+    for (const item of result.checklist) {
+      const check = item.checked ? "✅" : "⬜";
+      const auto = item.autoChecked ? " *(auto)*" : "";
+      lines.push(`- ${check} **${item.label}** [${item.category}]${auto}`);
+      if (item.details) {
+        lines.push(`  > ${item.details}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+};
+
+/**
+ * Render a compact delivery plan summary.
+ */
+export const renderPlanSummary = (plan: DeliveryPlan): string => {
+  const lines: string[] = [];
+
+  const totalTasks = plan.phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
+  const branchPreview =
+    plan.branchStrategy.length > 100
+      ? `${plan.branchStrategy.slice(0, 100)}…`
+      : plan.branchStrategy;
+
+  lines.push(`## 🚀 Delivery Summary — Proposal #${plan.proposalId}`);
+  lines.push("");
+  lines.push(`- **Phases:** ${plan.phases.length} phases, ${totalTasks} total tasks`);
+  lines.push(`- **Estimated Duration:** ${plan.estimatedDuration}`);
+  lines.push(`- **Branch Strategy:** ${branchPreview}`);
+
+  return lines.join("\n");
 };
 
 /**
@@ -144,11 +230,13 @@ export const renderHistory = (proposals: Proposal[]): string => {
           ? "❌"
           : p.status === "executed"
             ? "🚀"
-            : p.status === "deliberating"
-              ? "🗳️"
-              : p.status === "open"
-                ? "📝"
-                : "⚠️";
+            : p.status === "controlled"
+              ? "🔒"
+              : p.status === "deliberating"
+                ? "🗳️"
+                : p.status === "open"
+                  ? "📝"
+                  : "⚠️";
 
     lines.push(`## ${statusEmoji} Proposal #${p.id}: ${p.title}`);
     lines.push(`**Status:** ${p.status} | **By:** ${p.proposedBy} | **Created:** ${p.createdAt.split("T")[0]}`);

@@ -1,17 +1,33 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-// Internal modules
+// Cross-cutting
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
-import { initializeAgents, addAgent, removeAgent, listAgents, getAgent, formatAgentsTable } from "./agents.js";
+
+// Layer 1: Governance
 import {
   createProposal, getProposal, listProposals, updateProposalStatus,
   storeDeliberationResults, storeExecutionResult, formatProposal,
-} from "./proposals.js";
-import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./voting.js";
-import { dispatchSwarm } from "./swarm.js";
-import { synthesize } from "./synthesis.js";
-import { executeProposal } from "./execution.js";
+} from "./governance/proposals.js";
+import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./governance/voting.js";
+import { assertTransition, statusLabel } from "./governance/lifecycle.js";
+
+// Layer 2: Intelligence
+import { initializeAgents, addAgent, removeAgent, getAgent, listAgents, formatAgentsTable } from "./intelligence/agents.js";
+import { dispatchSwarm } from "./intelligence/swarm.js";
+import { synthesize } from "./intelligence/synthesis.js";
+
+// Layer 3: Delivery
+import { executeProposal } from "./delivery/execution.js";
+import { parseDeliveryPlan, storePlan, getPlan, formatPlan } from "./delivery/plan.js";
+import { generateReleaseNotes, generateChangelog } from "./delivery/artifacts.js";
+
+// Layer 4: Control
+import { runGates } from "./control/gates.js";
+import { recordAudit, getProposalAudit, formatAuditTrail } from "./control/audit.js";
+import { generateChecklist, formatChecklist, checklistStats } from "./control/checklist.js";
+
+// Rendering
 import { renderDashboard, renderDeliberationProgress, renderHistory, renderAgentOutputSummary } from "./render.js";
 
 export default function daoExtension(pi: ExtensionAPI) {
@@ -38,7 +54,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       return {
         systemPrompt:
           event.systemPrompt +
-          "\n\n## DAO Swarm\nThe pi-swarm-dao extension is loaded. Use `dao_setup` to initialize the DAO with default agents, or run `/dao` for the dashboard.",
+          "\n\n## DAO Swarm\nThe pi-swarm-dao extension is loaded (4-layer architecture: Governance → Intelligence → Control → Delivery). Use `dao_setup` to initialize the DAO with default agents, or run `/dao` for the dashboard.",
       };
     }
 
@@ -52,7 +68,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       (p) => p.status === "open" || p.status === "deliberating"
     );
 
-    let daoContext = `\n\n## DAO Swarm Status`;
+    let daoContext = `\n\n## DAO Swarm Status (4-Layer: Governance → Intelligence → Control → Delivery)`;
     daoContext += `\n- Active agents: ${agents.length} (${agentList}) — Total weight: ${totalWeight}`;
     daoContext += `\n- Open proposals: ${openProposals.length}`;
     if (openProposals.length > 0) {
@@ -60,8 +76,14 @@ export default function daoExtension(pi: ExtensionAPI) {
         daoContext += `\n  - #${p.id} "${p.title}" (${p.status})`;
       }
     }
-    daoContext += `\n- Config: quorum=${state.config.quorumPercent}%, approval=${state.config.approvalThreshold}%`;
-    daoContext += `\n\nYou have access to DAO governance tools. Use \`dao_propose\` to create proposals and \`dao_deliberate\` to run the full deliberation cycle with all agents.`;
+    daoContext += `\n- Config: quorum=${state.config.quorumPercent}%, approval=${state.config.approvalThreshold}%, risk=${state.config.riskThreshold}/10`;
+    daoContext += `\n\nYou have access to DAO governance tools:`;
+    daoContext += `\n- \`dao_propose\` → create proposals`;
+    daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote`;
+    daoContext += `\n- \`dao_check\` → run control gates on approved proposals before execution`;
+    daoContext += `\n- \`dao_plan\` → generate structured delivery plan`;
+    daoContext += `\n- \`dao_execute\` → execute controlled/approved proposals`;
+    daoContext += `\n- \`dao_audit\` → view full audit trail`;
 
     return {
       systemPrompt: event.systemPrompt + daoContext,
@@ -99,7 +121,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const table = formatAgentsTable(agents);
       return toolResult(
-        `# DAO Initialized\n\n${agents.length} agents configured:\n\n${table}\n\nThe DAO is ready. Create proposals with \`dao_propose\` and deliberate with \`dao_deliberate\`.`
+        `# DAO Initialized\n\n${agents.length} agents configured:\n\n${table}\n\nThe 4-layer DAO is ready:\n- **Governance:** Propose and deliberate\n- **Intelligence:** Agent swarm analysis\n- **Control:** Quality gates & audit trail\n- **Delivery:** Execution & artifacts\n\nCreate proposals with \`dao_propose\` and deliberate with \`dao_deliberate\`.`
       );
     },
   });
@@ -202,6 +224,15 @@ export default function daoExtension(pi: ExtensionAPI) {
         params.context
       );
 
+      // Audit: proposal created
+      recordAudit(
+        proposal.id,
+        "governance",
+        "proposal_created",
+        "user",
+        `Proposal "${params.title}" created by user`
+      );
+
       return toolResult(
         `# Proposal #${proposal.id} Created\n\n${formatProposal(proposal)}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start the swarm deliberation.`
       );
@@ -247,14 +278,24 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult("No agents in the DAO. Add agents first.");
       }
 
-      // Update status
+      // Update status to deliberating
       updateProposalStatus(proposal.id, "deliberating");
+
+      // Audit: deliberation started
+      recordAudit(
+        proposal.id,
+        "governance",
+        "deliberation_started",
+        "system",
+        `Swarm deliberation started with ${agents.length} agents`
+      );
 
       const startTime = Date.now();
 
       // Stream progress updates
       onUpdate?.({
         content: [{ type: "text", text: renderDeliberationProgress(0, agents.length, "Starting...") }],
+        details: undefined,
       });
 
       // Dispatch swarm — all agents in parallel
@@ -270,6 +311,7 @@ export default function daoExtension(pi: ExtensionAPI) {
                 text: renderDeliberationProgress(completed, total, agentName),
               },
             ],
+            details: undefined,
           });
         }
       );
@@ -299,6 +341,16 @@ export default function daoExtension(pi: ExtensionAPI) {
         agentOutputs[i].vote = votes[i];
       }
 
+      // Audit: swarm completed
+      const durationMs = Date.now() - startTime;
+      recordAudit(
+        proposal.id,
+        "intelligence",
+        "swarm_completed",
+        "system",
+        `${agentOutputs.length} agents completed in ${(durationMs / 1000).toFixed(1)}s`
+      );
+
       // Synthesize all outputs
       const synthDoc = synthesize(agentOutputs, votes);
 
@@ -310,11 +362,23 @@ export default function daoExtension(pi: ExtensionAPI) {
       storeDeliberationResults(proposal.id, agentOutputs, synthDoc, votes);
       updateProposalStatus(proposal.id, finalStatus);
 
-      const durationMs = Date.now() - startTime;
+      // Audit: votes tallied
+      recordAudit(
+        proposal.id,
+        "governance",
+        "votes_tallied",
+        "system",
+        `Result: ${finalStatus} with ${(tally.approvalScore * 100).toFixed(1)}% weighted approval`
+      );
 
       // Build the full result
       const tallyFormatted = formatTallyResult(tally);
       const agentSummary = renderAgentOutputSummary(agentOutputs);
+
+      let nextStepHint = "";
+      if (tally.approved) {
+        nextStepHint = "\n\n> **Next step:** Run `dao_check` to validate with control gates before execution.";
+      }
 
       const resultText = [
         `# Deliberation Complete — Proposal #${proposal.id}`,
@@ -329,6 +393,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         "---",
         "",
         synthDoc,
+        nextStepHint,
       ].join("\n");
 
       return toolResult(resultText, { deliberation: { proposalId: proposal.id, tally, durationMs } });
@@ -362,6 +427,183 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // TOOL: dao_check — Control Gates
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_check",
+    label: "DAO Control Check",
+    description:
+      "Run quality control gates and generate checklist for an approved proposal before execution. Validates quorum, risk, consensus, specs, and delivery feasibility.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the approved proposal to check" }),
+    }),
+    promptSnippet: "dao_check — Run control gates before execution",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved (status: ${statusLabel(proposal.status)}). Only approved proposals can be checked.`
+        );
+      }
+
+      // Run all gates
+      const result = runGates(proposal);
+
+      // Generate checklist
+      const checklist = generateChecklist(proposal);
+      result.checklist = checklist;
+
+      // Audit: gates checked
+      recordAudit(
+        proposal.id,
+        "control",
+        "gates_checked",
+        "system",
+        `${result.gates.length} gates evaluated: ${result.blockerCount} blockers, ${result.warningCount} warnings`
+      );
+
+      // Auto-transition to "controlled" if all gates passed
+      if (result.allGatesPassed) {
+        assertTransition("approved", "controlled");
+        updateProposalStatus(proposal.id, "controlled");
+        recordAudit(
+          proposal.id,
+          "control",
+          "status_controlled",
+          "system",
+          "All gates passed — proposal promoted to controlled"
+        );
+      }
+
+      // Format output
+      const stats = checklistStats(checklist);
+
+      const gateTable = [
+        "| Gate | Status | Severity | Message |",
+        "|------|--------|----------|---------|",
+      ];
+      for (const gate of result.gates) {
+        const icon = gate.passed ? "✅" : gate.severity === "blocker" ? "🚫" : gate.severity === "warning" ? "⚠️" : "ℹ️";
+        gateTable.push(`| ${gate.name} | ${icon} ${gate.passed ? "Pass" : "Fail"} | ${gate.severity} | ${gate.message} |`);
+      }
+
+      const lines = [
+        `# Control Check — Proposal #${proposal.id}`,
+        "",
+        `**Result:** ${result.allGatesPassed ? "✅ ALL GATES PASSED" : "🚫 GATES BLOCKED"}`,
+        `**Gates:** ${result.gates.filter((g) => g.passed).length}/${result.gates.length} passed | ${result.blockerCount} blockers | ${result.warningCount} warnings`,
+        "",
+        "## Gate Results",
+        "",
+        ...gateTable,
+        "",
+        formatChecklist(checklist),
+        "",
+        `**Checklist:** ${stats.checked}/${stats.total} (${stats.percent}%)`,
+      ];
+
+      if (result.allGatesPassed) {
+        lines.push("");
+        lines.push("> **Ready for execution.** Run `dao_plan` to generate a delivery plan, or `dao_execute` to proceed directly.");
+      } else {
+        lines.push("");
+        lines.push("> **Blocked.** Review the failing gates above. You may resolve issues and re-run `dao_check`, or proceed at your own risk.");
+      }
+
+      return toolResult(lines.join("\n"), { controlCheck: result });
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_audit — Audit Trail
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_audit",
+    label: "DAO Audit Trail",
+    description: "Show the full audit trail for a proposal or all proposals.",
+    parameters: Type.Object({
+      proposalId: Type.Optional(Type.Number({ description: "Specific proposal ID (omit for full audit)" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      let entries;
+
+      if (params.proposalId !== undefined) {
+        const proposal = getProposal(params.proposalId);
+        if (!proposal) {
+          return toolResult(`Proposal #${params.proposalId} not found.`);
+        }
+        entries = getProposalAudit(params.proposalId);
+      } else {
+        entries = getState().auditLog;
+      }
+
+      if (entries.length === 0) {
+        return params.proposalId !== undefined
+          ? toolResult(`No audit entries found for proposal #${params.proposalId}.`)
+          : toolResult("No audit entries recorded yet.");
+      }
+
+      return toolResult(formatAuditTrail(entries));
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_plan — Delivery Plan
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_plan",
+    label: "DAO Delivery Plan",
+    description: "Generate or show the structured delivery plan for an approved/controlled proposal.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal" }),
+    }),
+    promptSnippet: "dao_plan — Show structured delivery plan with phases, tasks, and timeline",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved/controlled (status: ${statusLabel(proposal.status)}). Only approved or controlled proposals can have delivery plans.`
+        );
+      }
+
+      // Check for existing plan
+      let plan = getPlan(params.proposalId);
+
+      if (!plan) {
+        // Parse plan from delivery agent output, or from execution result / synthesis
+        const deliveryOutput = proposal.agentOutputs.find((o) => o.agentId === "delivery")?.content
+          ?? proposal.executionResult
+          ?? proposal.synthesis
+          ?? proposal.description;
+
+        plan = parseDeliveryPlan(params.proposalId, deliveryOutput);
+        storePlan(plan);
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "plan_generated",
+          "system",
+          `Delivery plan created with ${plan.phases.length} phases, ${plan.phases.reduce((n, p) => n + p.tasks.length, 0)} tasks`
+        );
+      }
+
+      return toolResult(formatPlan(plan));
+    },
+  });
+
+  // ================================================================
   // TOOL: dao_execute
   // ================================================================
 
@@ -385,25 +627,50 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
       }
 
-      if (proposal.status !== "approved") {
+      // Accept both "approved" (legacy) and "controlled" status
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
         return toolResult(
-          `Proposal #${proposal.id} is not approved (status: ${proposal.status}). Only approved proposals can be executed.`
+          `Proposal #${proposal.id} is not approved or controlled (status: ${statusLabel(proposal.status)}). Only approved/controlled proposals can be executed.`
         );
+      }
+
+      let warning = "";
+      if (proposal.status === "approved") {
+        warning = "\n\n> ⚠️ **Note:** This proposal was executed without passing through control gates (`dao_check`). Consider running `dao_check` before execution for better quality assurance.";
       }
 
       onUpdate?.({
         content: [{ type: "text", text: "🚀 Executing proposal — delegating to Delivery Agent..." }],
+        details: undefined,
       });
 
       try {
         const result = await executeProposal(proposal, params.executorId, signal);
         storeExecutionResult(proposal.id, result);
 
+        // Audit: execution completed
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "execution_completed",
+          "system",
+          `Execution completed for proposal #${proposal.id}`
+        );
+
         return toolResult(
-          `# Execution Plan — Proposal #${proposal.id}\n\n${result}`
+          `# Execution Plan — Proposal #${proposal.id}\n\n${result}${warning}`
         );
       } catch (err: any) {
         updateProposalStatus(proposal.id, "failed");
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "execution_failed",
+          "system",
+          `Execution failed: ${err.message}`
+        );
+
         return toolResult(`Execution failed: ${err.message}`);
       }
     },
@@ -415,7 +682,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("dao", {
     description: "Show the DAO dashboard with agents, proposals, and configuration",
-    async execute(_args, ctx) {
+    async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
       const dashboard = renderDashboard(state);
 
@@ -442,7 +709,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("dao-propose", {
     description: "Interactively create a new proposal",
-    async execute(_args, ctx) {
+    async handler(_args: string, ctx: ExtensionCommandContext) {
       if (!ctx.hasUI) {
         pi.sendMessage({
           customType: "dao-error",
@@ -483,6 +750,15 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const proposal = createProposal(title, description, "user", context);
 
+      // Audit: proposal created via command
+      recordAudit(
+        proposal.id,
+        "governance",
+        "proposal_created",
+        "user",
+        `Proposal "${title}" created via /dao-propose command`
+      );
+
       ctx.ui.notify(`Proposal #${proposal.id} created!`, "info");
       await pi.sendUserMessage(
         `I've created DAO proposal #${proposal.id}: "${proposal.title}". Please run the deliberation on it.`
@@ -496,55 +772,52 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("dao-config", {
     description: "View or modify DAO configuration",
-    async execute(_args, ctx) {
+    async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
 
       if (!ctx.hasUI) {
         pi.sendMessage({
           customType: "dao-config",
-          content: `## DAO Config\n- Quorum: ${state.config.quorumPercent}%\n- Approval: ${state.config.approvalThreshold}%\n- Model: ${state.config.defaultModel}\n- Max concurrent: ${state.config.maxConcurrent}`,
+          content: `## DAO Config\n- Quorum: ${state.config.quorumPercent}%\n- Approval: ${state.config.approvalThreshold}%\n- Model: ${state.config.defaultModel}\n- Max concurrent: ${state.config.maxConcurrent}\n- Risk threshold: ${state.config.riskThreshold}/10\n- Required gates: ${state.config.requiredGates.join(", ")}`,
           display: true,
         });
         return;
       }
 
-      const choice = await ctx.ui.select("DAO Configuration", [
-        { label: `Quorum: ${state.config.quorumPercent}%`, value: "quorum" },
-        { label: `Approval threshold: ${state.config.approvalThreshold}%`, value: "approval" },
-        { label: `Default model: ${state.config.defaultModel}`, value: "model" },
-        { label: `Max concurrent: ${state.config.maxConcurrent}`, value: "concurrent" },
-        { label: "Cancel", value: "cancel" },
-      ]);
+      const options = [
+        `Quorum: ${state.config.quorumPercent}%`,
+        `Approval threshold: ${state.config.approvalThreshold}%`,
+        `Default model: ${state.config.defaultModel}`,
+        `Max concurrent: ${state.config.maxConcurrent}`,
+        `Risk threshold: ${state.config.riskThreshold}/10`,
+        "Cancel",
+      ];
+      const choice = await ctx.ui.select("DAO Configuration", options);
 
-      if (!choice || choice === "cancel") return;
+      if (!choice || choice === "Cancel") return;
 
-      const configKey = choice === "quorum"
-        ? "quorumPercent"
-        : choice === "approval"
-          ? "approvalThreshold"
-          : choice === "model"
-            ? "defaultModel"
-            : "maxConcurrent";
+      const configMap: Record<string, { key: keyof typeof state.config; parse: (v: string) => any }> = {
+        "Quorum": { key: "quorumPercent", parse: (v) => Math.max(0, Math.min(100, parseInt(v, 10) || 60)) },
+        "Approval": { key: "approvalThreshold", parse: (v) => Math.max(0, Math.min(100, parseInt(v, 10) || 51)) },
+        "Default": { key: "defaultModel", parse: (v) => v },
+        "Max": { key: "maxConcurrent", parse: (v) => Math.max(1, Math.min(8, parseInt(v, 10) || 4)) },
+        "Risk": { key: "riskThreshold", parse: (v) => Math.max(1, Math.min(10, parseInt(v, 10) || 7)) },
+      };
+
+      const prefix = choice.split(" ")[0];
+      const mapping = configMap[prefix];
+      if (!mapping) return;
 
       const input = await ctx.ui.input(
-        `New value for ${choice}`,
-        `Current: ${(state.config as any)[configKey]}`
+        `New value for ${mapping.key}`,
+        `Current: ${state.config[mapping.key]}`
       );
 
       if (!input) return;
 
-      if (choice === "quorum") {
-        state.config.quorumPercent = Math.max(0, Math.min(100, parseInt(input, 10) || 60));
-      } else if (choice === "approval") {
-        state.config.approvalThreshold = Math.max(0, Math.min(100, parseInt(input, 10) || 51));
-      } else if (choice === "model") {
-        state.config.defaultModel = input;
-      } else if (choice === "concurrent") {
-        state.config.maxConcurrent = Math.max(1, Math.min(8, parseInt(input, 10) || 4));
-      }
-
+      (state.config as any)[mapping.key] = mapping.parse(input);
       setState(state);
-      ctx.ui.notify(`Updated ${choice} successfully`, "info");
+      ctx.ui.notify(`Updated ${mapping.key} successfully`, "info");
     },
   });
 
@@ -554,13 +827,31 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("dao-history", {
     description: "Show the full history of DAO proposals and deliberations",
-    async execute(_args, _ctx) {
+    async handler(_args: string, _ctx: ExtensionCommandContext) {
       const proposals = listProposals();
       const history = renderHistory(proposals);
 
       pi.sendMessage({
         customType: "dao-history",
         content: history,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao-audit
+  // ================================================================
+
+  pi.registerCommand("dao-audit", {
+    description: "Show the full DAO audit trail across all proposals",
+    async handler(_args: string, _ctx: ExtensionCommandContext) {
+      const state = getState();
+      const trail = formatAuditTrail(state.auditLog);
+
+      pi.sendMessage({
+        customType: "dao-audit",
+        content: trail,
         display: true,
       });
     },
