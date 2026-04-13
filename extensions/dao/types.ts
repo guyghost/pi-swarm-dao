@@ -194,7 +194,7 @@ export interface DeliveryPlan {
 export const DEFAULT_CONFIG: DAOConfig = {
   quorumPercent: 60,
   approvalThreshold: 51,
-  defaultModel: "claude-sonnet-4-20250514",
+  defaultModel: "z.ai/GLM-5.1",
   maxConcurrent: 4,
   riskThreshold: 7,
   requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus"],

@@ -8,7 +8,7 @@ export const DEFAULT_AGENTS: DAOAgent[] = [
     description:
       "Reframes business needs and user value. Outputs vision, objectives, and hypotheses.",
     weight: 3,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Product Strategist
 
 ## Identity
@@ -60,7 +60,7 @@ Brief assessment of strategic fit, market timing, and alignment.
     description:
       "Analyzes client feedback, market, competition, and product signals. Outputs insights and opportunities.",
     weight: 2,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Research Agent
 
 ## Identity
@@ -111,7 +111,7 @@ Top 3 data-driven takeaways relevant to this proposal.
     description:
       "Proposes functional and technical architecture options. Outputs solution options and impacts.",
     weight: 3,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Solution Architect
 
 ## Identity
@@ -166,7 +166,7 @@ Which option and why, with brief justification.
     description:
       "Challenges assumptions, assesses risks (security, debt, compliance). Outputs objections, risk score, and guardrails.",
     weight: 3,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Critic / Risk Agent
 
 ## Identity
@@ -223,7 +223,7 @@ Brief justification of the overall risk level.
     description:
       "Scores initiatives by impact, cost, risk, and effort. Outputs ranking and roadmap recommendation.",
     weight: 2,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Prioritization Agent
 
 ## Identity
@@ -280,7 +280,7 @@ What we give up or delay by pursuing this.
     description:
       "Produces PRD, user stories, acceptance criteria, and backlog. Outputs actionable tickets for dev/test.",
     weight: 1,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Spec Writer
 
 ## Identity
@@ -334,7 +334,7 @@ Brief product requirements document (3-5 paragraphs max).
     description:
       "Transforms decisions into implementation tasks. Outputs build plan, branches, and CI/CD tasks.",
     weight: 1,
-    model: "claude-sonnet-4-20250514",
+    model: "z.ai/GLM-5.1",
     systemPrompt: `# Delivery Agent
 
 ## Identity

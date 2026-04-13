@@ -1,25 +1,46 @@
 ---
 name: dao-governance
-description: DAO governance with 7 specialized AI agents (Strategist, Researcher, Architect, Critic, Prioritizer, Spec Writer, Delivery) that deliberate on proposals through weighted voting. Use when you need structured multi-perspective analysis of a product decision, architecture change, or strategic initiative — or when you want risk assessment, prioritization, and actionable specs from a single deliberation cycle.
+description: DAO governance with 4-layer architecture (Governance, Intelligence, Control, Delivery) and 7 specialized AI agents that deliberate on proposals through weighted voting, quality gates, and delivery plans. Use when you need structured multi-perspective analysis, risk assessment, quality-controlled execution, and audit trails for product decisions, architecture changes, or strategic initiatives.
 ---
 
 # DAO Governance Skill
 
-A decentralized autonomous organization (DAO) of specialized AI agents that deliberate on proposals through weighted voting.
+A 4-layer decentralized autonomous organization (DAO) of specialized AI agents that deliberate on proposals through weighted voting, quality gates, and actionable delivery plans.
 
 ## When to Use
 
 - When you need structured multi-perspective analysis of a decision
-- When you want to evaluate a product proposal, architecture change, or strategic initiative
-- When you need risk assessment, prioritization, and actionable specs from a single deliberation
+- When you want risk assessment, quality gates, and a delivery plan — not just a vote
+- When you need an audit trail for governance decisions
+- When you want to go from proposal → deliberation → controlled execution
+
+## Architecture — 4 Layers
+
+| Layer | Name | Mission |
+|-------|------|---------|
+| L1 | Governance | Proposal lifecycle, voting, quorum |
+| L2 | Intelligence | 7 specialized agents analyzing in parallel |
+| L3 | Control | Quality gates, audit trail, checklists |
+| L4 | Delivery | Execution plans, tasks, release artifacts |
+
+## Proposal Lifecycle
+
+```
+open → deliberating → approved → controlled → executed
+                   ↘ rejected  ↘ rejected   ↘ failed
+```
+
+Each transition is recorded in the audit trail. The `controlled` status means all quality gates have passed and the delivery plan is ready.
 
 ## Quick Start
 
 ```
-1. Initialize: ask Pi to "set up the DAO" → triggers `dao_setup`
-2. Propose: describe what you want to evaluate → triggers `dao_propose`
-3. Deliberate: ask to "run the deliberation" → triggers `dao_deliberate`
-4. Execute: if approved, ask to "execute the proposal" → triggers `dao_execute`
+1. Initialize:  ask Pi to "set up the DAO"            → triggers `dao_setup`
+2. Propose:     describe what you want to evaluate      → triggers `dao_propose`
+3. Deliberate:  ask to "run the deliberation"           → triggers `dao_deliberate`
+4. Check:       ask to "run the control gates"          → triggers `dao_check`
+5. Plan:        ask to "generate the delivery plan"     → triggers `dao_plan`
+6. Execute:     if approved, ask to "execute"           → triggers `dao_execute`
 ```
 
 ## The 7 Default Agents
@@ -43,27 +64,43 @@ A decentralized autonomous organization (DAO) of specialized AI agents that deli
 5. Quorum required: at least 60% of agents must cast a non-abstain vote
 6. A synthesis document aggregates all perspectives
 
-## Available Tools
+## Available Tools (11)
 
-| Tool | Description |
-|------|-------------|
-| `dao_setup` | Initialize DAO with 7 default agents |
-| `dao_add_agent` | Add a custom agent (name, role, weight 1-10) |
-| `dao_remove_agent` | Remove an agent by ID |
-| `dao_list_agents` | List all agents and weights |
-| `dao_propose` | Create a new proposal |
-| `dao_deliberate` | Run full deliberation cycle (parallel agents → synthesis → vote) |
-| `dao_tally` | View detailed vote results |
-| `dao_execute` | Execute an approved proposal via Delivery Agent |
+| Tool | Layer | Description |
+|------|-------|-------------|
+| `dao_setup` | L1 | Initialize DAO with 7 default agents |
+| `dao_add_agent` | L1 | Add a custom agent (name, role, weight 1-10) |
+| `dao_remove_agent` | L1 | Remove an agent by ID |
+| `dao_list_agents` | L1 | List all agents and weights |
+| `dao_propose` | L1 | Create a new proposal |
+| `dao_deliberate` | L2 | Run full deliberation cycle (parallel agents → synthesis → vote) |
+| `dao_tally` | L1 | View detailed vote results |
+| `dao_check` | L3 | Run control gates before execution |
+| `dao_plan` | L4 | Generate or view delivery plan |
+| `dao_execute` | L4 | Execute an approved proposal via Delivery Agent |
+| `dao_audit` | L3 | View audit trail for a proposal |
 
-## Slash Commands
+## Control Layer — 5 Quality Gates
+
+The `dao_check` tool runs all gates after approval. Results determine whether execution is safe.
+
+| Gate | Severity | Purpose |
+|------|----------|---------|
+| quorum-quality | blocker | Quorum met with meaningful participation |
+| risk-threshold | warning | Average risk score within config threshold |
+| vote-consensus | warning | No strong dissent among high-weight agents |
+| spec-completeness | info | Spec Writer produced actionable artifacts |
+| delivery-feasibility | warning | Delivery plan is realistic and resourced |
+
+## Slash Commands (5)
 
 | Command | Description |
 |---------|-------------|
 | `/dao` | Dashboard: agents, proposals, config |
 | `/dao-propose` | Interactive proposal creation |
-| `/dao-config` | Modify quorum, threshold, model, concurrency |
+| `/dao-config` | View/modify quorum, threshold, model, concurrency |
 | `/dao-history` | Full history of proposals and votes |
+| `/dao-audit` | Audit trail for all governance decisions |
 
 ## Configuration
 
@@ -71,16 +108,17 @@ A decentralized autonomous organization (DAO) of specialized AI agents that deli
 |---------|---------|-------------|
 | Quorum | 60% | Minimum agent participation (non-abstain) |
 | Approval | 51% | Weighted "for" percentage to approve |
-| Model | claude-sonnet-4-20250514 | Default LLM for sub-agents |
+| Model | z.ai/GLM-5.1 | Default LLM for sub-agents |
 | Max Concurrent | 4 | Parallel agent limit |
+| Risk Threshold | 7/10 | Max average risk score for `dao_check` to pass |
 
 ## Example Workflow
 
 ```
 User: Set up the DAO and propose migrating our auth system to OAuth2
 
-→ dao_setup (7 agents initialized)
-→ dao_propose (Proposal #1 created)
+→ dao_setup     (7 agents initialized)
+→ dao_propose   (Proposal #1 created)
 → dao_deliberate (7 agents analyze in parallel)
 
 Result:
@@ -93,11 +131,18 @@ Result:
 - Delivery: FOR — 3-phase plan, 4 weeks
 
 Verdict: ✅ APPROVED (100% for, 15/15 weighted)
+
+→ dao_check     (5 quality gates — all passed)
+→ dao_plan      (delivery plan: 3 phases, 47 tasks)
+→ dao_execute   (tasks dispatched)
+→ dao_audit     (full audit trail available)
 ```
 
 ## Tips
 
 - **Customize agents**: Add domain-specific agents (e.g., "Security Expert", "UX Researcher") for specialized proposals
-- **Adjust weights**: Higher weight = more voting influence. Use this for agents whose perspective matters most for your domain
-- **Context matters**: Add rich context to proposals (market data, constraints, prior decisions) for better agent analysis
-- **Iterative**: You can create multiple proposals and compare deliberation results
+- **Adjust weights**: Higher weight = more voting influence. Use for agents whose perspective matters most
+- **Context matters**: Add rich context to proposals (market data, constraints, prior decisions) for better analysis
+- **Iterative**: Create multiple proposals and compare deliberation results
+- **Use the control layer**: Run `dao_check` before execution — it catches issues the vote alone won't
+- **Audit everything**: Use `dao_audit` or `/dao-audit` to review the full decision trail post-execution
