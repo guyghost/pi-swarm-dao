@@ -7,6 +7,13 @@ import type {
   DeliveryPlan,
   ChecklistItem,
 } from "./types.js";
+import { PROPOSAL_TYPE_LABELS } from "./types.js";
+
+/** Emoji for each proposal type — derived from PROPOSAL_TYPE_LABELS */
+const typeEmoji = (type: Proposal["type"]): string => {
+  const label = PROPOSAL_TYPE_LABELS[type];
+  return label ? label.split(" ")[0] : "📋";
+};
 
 /**
  * Render the full DAO dashboard.
@@ -69,8 +76,8 @@ export const renderDashboard = (state: DAOState): string => {
 
     if (open.length > 0) {
       lines.push("### Active");
-      lines.push("| # | Title | Status | Proposed By |");
-      lines.push("|---|-------|--------|-------------|");
+      lines.push("| # | Title | Type | Status | Proposed By |");
+      lines.push("|---|-------|------|--------|-------------|");
       for (const p of open) {
         const statusEmoji =
           p.status === "deliberating"
@@ -78,8 +85,9 @@ export const renderDashboard = (state: DAOState): string => {
             : p.status === "controlled"
               ? "🔒"
               : "📝";
+        const typeBadge = `${typeEmoji(p.type)} ${p.type}`;
         lines.push(
-          `| ${p.id} | ${p.title} | ${statusEmoji} ${p.status} | ${p.proposedBy} |`
+          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${p.proposedBy} |`
         );
       }
       lines.push("");
@@ -87,8 +95,8 @@ export const renderDashboard = (state: DAOState): string => {
 
     if (resolved.length > 0) {
       lines.push("### Resolved");
-      lines.push("| # | Title | Status | Resolved |");
-      lines.push("|---|-------|--------|----------|");
+      lines.push("| # | Title | Type | Status | Resolved |");
+      lines.push("|---|-------|------|--------|----------|");
       for (const p of resolved) {
         const statusEmoji =
           p.status === "approved"
@@ -100,8 +108,9 @@ export const renderDashboard = (state: DAOState): string => {
                 : p.status === "controlled"
                   ? "🔒"
                   : "⚠️";
+        const typeBadge = `${typeEmoji(p.type)} ${p.type}`;
         lines.push(
-          `| ${p.id} | ${p.title} | ${statusEmoji} ${p.status} | ${p.resolvedAt?.split("T")[0] ?? "—"} |`
+          `| ${p.id} | ${p.title} | ${typeBadge} | ${statusEmoji} ${p.status} | ${p.resolvedAt?.split("T")[0] ?? "—"} |`
         );
       }
     }
@@ -238,8 +247,8 @@ export const renderHistory = (proposals: Proposal[]): string => {
                   ? "📝"
                   : "⚠️";
 
-    lines.push(`## ${statusEmoji} Proposal #${p.id}: ${p.title}`);
-    lines.push(`**Status:** ${p.status} | **By:** ${p.proposedBy} | **Created:** ${p.createdAt.split("T")[0]}`);
+    lines.push(`## ${statusEmoji} Proposal #${p.id}: ${typeEmoji(p.type)} ${p.title}`);
+    lines.push(`**Type:** ${typeEmoji(p.type)} ${p.type} | **Status:** ${p.status} | **By:** ${p.proposedBy} | **Created:** ${p.createdAt.split("T")[0]}`);
     if (p.resolvedAt) {
       lines.push(`**Resolved:** ${p.resolvedAt.split("T")[0]}`);
     }

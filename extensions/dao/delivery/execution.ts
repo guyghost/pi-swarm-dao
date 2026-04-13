@@ -3,6 +3,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Proposal, DAOAgent } from "../types.js";
+import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState } from "../persistence.js";
 import { getAgent } from "../intelligence/agents.js";
 import { extractAssistantMessage } from "../pi-json.js";
@@ -127,7 +128,10 @@ export async function executeProposal(
  * Build the execution prompt with full deliberation context.
  */
 const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
+  const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
   let prompt = `# Execute Approved Proposal #${proposal.id}: ${proposal.title}\n\n`;
+  prompt += `**Type:** ${typeLabel}\n\n`;
+  prompt += `> Adapt your execution plan to this proposal type (${proposal.type}).\n\n`;
   prompt += `## Proposal Description\n${proposal.description}\n\n`;
 
   if (proposal.context) {

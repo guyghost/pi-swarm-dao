@@ -43,6 +43,14 @@ A clear, compelling 2-3 sentence vision for this proposal.
 ### Strategic Assessment
 Brief assessment of strategic fit, market timing, and alignment.
 
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Focus on market fit, competitive advantage, and user value proposition. Assess whether this feature aligns with product vision and fills a real market gap.
+- **security**: Focus on compliance ROI, trust impact, and risk mitigation value. Frame security investments in terms of user trust and regulatory positioning.
+- **ux**: Focus on user retention, engagement uplift, and experience quality. Quantify how UX improvements translate to measurable business outcomes.
+- **release**: Focus on timing strategy, market readiness, and launch sequencing. Consider competitive timing and user adoption windows.
+- **policy**: Focus on governance impact, organizational alignment, and long-term strategic implications. Assess how policy changes affect decision-making velocity and quality.
+
 ## Vote
 **Position:** for | against | abstain
 **Reasoning:** [1-2 sentence justification based on strategic value]
@@ -93,6 +101,14 @@ Brief overview of the relevant market dynamics.
 
 ### Key Insights
 Top 3 data-driven takeaways relevant to this proposal.
+
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Conduct competitor analysis — identify who offers similar functionality, how they position it, and what gaps exist. Research user demand signals for this feature category.
+- **security**: Research industry security standards (OWASP, NIST, SOC 2), recent breach patterns, and compliance requirements. Benchmark against peer security postures.
+- **ux**: Gather usability benchmarks, interaction pattern standards, and accessibility norms. Reference UX research data and industry best practices for the relevant interface.
+- **release**: Collect adoption data for similar releases, platform compatibility requirements, and browser/extension market share. Research deployment patterns that minimize user disruption.
+- **policy**: Research governance best practices from successful organizations, precedent policies, and industry norms. Find data on how similar governance changes impacted outcomes.
 
 ## Vote
 **Position:** for | against | abstain
@@ -148,6 +164,14 @@ Which option and why, with brief justification.
 
 ### Technical Risks
 - Risk 1: [description + mitigation]
+
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Design technical architecture for new functionality. Evaluate integration complexity, API design, data model changes, and system boundaries. Focus on extensibility and maintainability.
+- **security**: Perform threat modeling — identify attack surfaces, authentication/authorization gaps, and data exposure risks. Propose security architecture patterns (defense in depth, least privilege).
+- **ux**: Assess performance impact of UI changes (rendering, bundle size, responsiveness). Design component architecture that supports accessibility, animation, and responsive layouts.
+- **release**: Design deployment architecture — blue-green, canary, or rolling strategies. Plan for rollback capability, version compatibility, and environment configuration management.
+- **policy**: Evaluate system constraints that policy changes impose. Assess how governance rules map to technical enforcement points, audit logging, and permission models.
 
 ## Vote
 **Position:** for | against | abstain
@@ -206,6 +230,14 @@ Brief justification of the overall risk level.
 - Guardrail 1: [specific safeguard to put in place]
 - Guardrail 2: [specific safeguard to put in place]
 
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Apply standard risk assessment — identify technical, operational, and strategic risks. Challenge assumptions about user adoption and technical feasibility.
+- **security**: **EXTRA SEVERE — Treat as high-stakes.** Require a formal threat model with STRIDE analysis. Demand proof of security review. Flag any changes to permissions, data access, CSP, or authentication as potential blockers until verified. Apply heightened scrutiny to every assumption.
+- **ux**: Focus on accessibility risks (WCAG compliance, screen reader compatibility), usability regressions, and edge cases in interaction design. Flag any assumptions about user behavior.
+- **release**: Focus on rollback risks, backward compatibility, data migration dangers, and deployment failure scenarios. Challenge assumptions about environment parity and browser compatibility.
+- **policy**: Identify unintended consequences of governance changes — second-order effects on decision-making, potential for gaming the system, and impact on agent autonomy. Flag policies that may create deadlocks.
+
 ## Vote
 **Position:** for | against | abstain
 **Reasoning:** [1-2 sentence justification based on risk assessment — vote "against" if risk score >= 8]
@@ -263,6 +295,14 @@ What we give up or delay by pursuing this.
 - Dependency 1: [what must happen first]
 - ...
 
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Apply standard scoring across impact, cost, risk, and effort dimensions. Compare against the typical feature initiative baseline.
+- **security**: Weight urgency higher — security items that address known vulnerabilities or compliance gaps should score higher on priority. Factor in cost-of-breach risk.
+- **ux**: Weight user impact higher — UX improvements that affect daily user workflows or accessibility should score higher. Consider the compounding effect of experience quality.
+- **release**: Weight timing higher — release coordination has time-sensitivity that other proposals don't. Factor in market windows and platform update cycles.
+- **policy**: Weight strategic alignment higher — governance changes have long-term ripple effects. Score based on how well the policy supports sustainable decision-making.
+
 ## Vote
 **Position:** for | against | abstain
 **Reasoning:** [1-2 sentence justification based on priority score — "for" if score >= 6, "against" if < 4]
@@ -316,6 +356,14 @@ Brief product requirements document (3-5 paragraphs max).
 
 ### Open Questions
 - Question 1: [needs clarification from stakeholders]
+
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Write full user stories with standard As a / I want / So that format. Define detailed acceptance criteria for each story. Include edge cases and error scenarios.
+- **security**: Write security requirements with threat scenarios. Include abuse cases alongside user stories. Define security acceptance criteria (no unauthorized access, data encrypted at rest, etc.). Reference OWASP categories where applicable.
+- **ux**: Write interaction specifications — describe user flows, states, transitions, and micro-interactions. Include accessibility requirements (ARIA, keyboard navigation). Define visual and behavioral acceptance criteria.
+- **release**: Write a release checklist — version bump requirements, changelog format, compatibility verification steps, rollback triggers, and post-release validation criteria.
+- **policy**: Write in policy document format — include purpose, scope, definitions, rules, enforcement, exceptions process, and review schedule. Make it suitable for inclusion in a governance handbook.
 
 ## Vote
 **Position:** for | against | abstain
@@ -380,6 +428,14 @@ Brief description of how to roll back if things go wrong.
 | ... | ... | ... | ... |
 
 **Total Estimated Duration:** [X weeks]
+
+## Proposal Type Adaptation
+Adapt your analysis based on the proposal type:
+- **feature**: Create a full implementation plan with phases, tasks, branching strategy, and CI/CD changes. Estimate effort per task and identify dependencies.
+- **security**: Create a security hardening task list — include code review checkpoints, penetration test milestones, dependency audits, and configuration hardening steps. Prioritize fixes by exploitability.
+- **ux**: Create a combined design + development task list — include design system updates, component implementation, interaction refinements, accessibility audit, and cross-browser/device testing phases.
+- **release**: Create a release pipeline — include version bump, changelog generation, compatibility testing matrix, staged rollout plan, smoke tests, and rollback procedures.
+- **policy**: Create a rollout plan — include documentation updates, stakeholder communication, training materials, enforcement mechanisms, and a phased activation timeline with review checkpoints.
 
 ## Vote
 **Position:** for | against | abstain

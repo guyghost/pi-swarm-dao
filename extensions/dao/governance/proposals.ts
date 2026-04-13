@@ -1,4 +1,5 @@
-import type { Proposal, ProposalStatus } from "../types.js";
+import type { Proposal, ProposalStatus, ProposalType } from "../types.js";
+import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState, setState } from "../persistence.js";
 
 /**
@@ -6,6 +7,7 @@ import { getState, setState } from "../persistence.js";
  */
 export const createProposal = (
   title: string,
+  type: ProposalType,
   description: string,
   proposedBy: string = "user",
   context?: string
@@ -15,6 +17,7 @@ export const createProposal = (
   const proposal: Proposal = {
     id: state.nextProposalId++,
     title,
+    type,
     description,
     context,
     proposedBy,
@@ -121,9 +124,10 @@ export const storeExecutionResult = (
  * Format a proposal as a readable summary.
  */
 export const formatProposal = (proposal: Proposal): string => {
+  const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
   const lines = [
     `## Proposal #${proposal.id}: ${proposal.title}`,
-    `**Status:** ${proposal.status} | **Proposed by:** ${proposal.proposedBy} | **Created:** ${proposal.createdAt}`,
+    `**Type:** ${typeLabel} | **Status:** ${proposal.status} | **Proposed by:** ${proposal.proposedBy} | **Created:** ${proposal.createdAt}`,
     "",
     proposal.description,
   ];
@@ -157,11 +161,11 @@ export const formatProposalsList = (proposals: Proposal[]): string => {
   }
 
   const header =
-    "| # | Title | Status | Proposed By | Created |\n|---|-------|--------|-------------|---------|";
+    "| # | Title | Type | Status | Proposed By | Created |\n|---|-------|------|--------|-------------|---------|";
   const rows = proposals
     .map(
       (p) =>
-        `| ${p.id} | ${p.title} | ${p.status} | ${p.proposedBy} | ${p.createdAt.split("T")[0]} |`
+        `| ${p.id} | ${p.title} | ${PROPOSAL_TYPE_LABELS[p.type]} | ${p.status} | ${p.proposedBy} | ${p.createdAt.split("T")[0]} |`
     )
     .join("\n");
   return `${header}\n${rows}`;

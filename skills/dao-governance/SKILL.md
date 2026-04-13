@@ -1,6 +1,6 @@
 ---
 name: dao-governance
-description: DAO governance with 4-layer architecture (Governance, Intelligence, Control, Delivery) and 7 specialized AI agents that deliberate on proposals through weighted voting, quality gates, and delivery plans. Use when you need structured multi-perspective analysis, risk assessment, quality-controlled execution, and audit trails for product decisions, architecture changes, or strategic initiatives.
+description: DAO governance with 4-layer architecture (Governance, Intelligence, Control, Delivery) and 7 specialized AI agents that deliberate on typed proposals (feature, security, ux, release, policy) through weighted voting, quality gates, and delivery plans. Proposal type focuses agent analysis and adjusts gate severity. Use when you need structured multi-perspective analysis, risk assessment, quality-controlled execution, and audit trails for product decisions, architecture changes, or strategic initiatives.
 ---
 
 # DAO Governance Skill
@@ -32,11 +32,23 @@ open → deliberating → approved → controlled → executed
 
 Each transition is recorded in the audit trail. The `controlled` status means all quality gates have passed and the delivery plan is ready.
 
+## Proposal Types
+
+Every proposal must specify a type. The type scopes agent analysis and can promote gate severity for high-stakes domains.
+
+| Type | Emoji | Domain | Example |
+|------|-------|--------|---------|
+| `feature` | ✨ | New functionality | Add search, dark mode, API endpoint |
+| `security` | 🔒 | Permissions, CSP, access, storage | Migrate to OAuth2, tighten CSP headers |
+| `ux` | 🎨 | Popup, onboarding, options, feedback | Redesign onboarding flow, add tooltips |
+| `release` | 📦 | Publication, rollback, version pinning | Ship v2.0, rollback v1.9.3, pin Chrome MVP |
+| `policy` | 📜 | Governance rules, quorum, agent roles | Change quorum to 75%, add "Legal" agent |
+
 ## Quick Start
 
 ```
 1. Initialize:  ask Pi to "set up the DAO"            → triggers `dao_setup`
-2. Propose:     describe what you want to evaluate      → triggers `dao_propose`
+2. Propose:     describe what you want to evaluate      → triggers `dao_propose` (select type interactively)
 3. Deliberate:  ask to "run the deliberation"           → triggers `dao_deliberate`
 4. Check:       ask to "run the control gates"          → triggers `dao_check`
 5. Plan:        ask to "generate the delivery plan"     → triggers `dao_plan`
@@ -118,7 +130,7 @@ The `dao_check` tool runs all gates after approval. Results determine whether ex
 User: Set up the DAO and propose migrating our auth system to OAuth2
 
 → dao_setup     (7 agents initialized)
-→ dao_propose   (Proposal #1 created)
+→ dao_propose   (Proposal #1 created, type="security")
 → dao_deliberate (7 agents analyze in parallel)
 
 Result:
@@ -132,7 +144,7 @@ Result:
 
 Verdict: ✅ APPROVED (100% for, 15/15 weighted)
 
-→ dao_check     (5 quality gates — all passed)
+→ dao_check     (5 quality gates — all passed, risk-threshold promoted to blocker for security type)
 → dao_plan      (delivery plan: 3 phases, 47 tasks)
 → dao_execute   (tasks dispatched)
 → dao_audit     (full audit trail available)
@@ -146,3 +158,4 @@ Verdict: ✅ APPROVED (100% for, 15/15 weighted)
 - **Iterative**: Create multiple proposals and compare deliberation results
 - **Use the control layer**: Run `dao_check` before execution — it catches issues the vote alone won't
 - **Audit everything**: Use `dao_audit` or `/dao-audit` to review the full decision trail post-execution
+- **Type-specific gates**: `security` proposals promote `risk-threshold` to blocker; `release` proposals promote `delivery-feasibility` to blocker. Pick the right type for stricter (or lighter) gate enforcement.

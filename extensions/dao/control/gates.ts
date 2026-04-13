@@ -5,6 +5,7 @@ import type {
   GateResult,
   ControlCheckResult,
   DAOAgent,
+  ProposalType,
 } from "../types.js";
 import { getState, setState } from "../persistence.js";
 
@@ -22,6 +23,25 @@ const getAgent = (agentId: string): DAOAgent | undefined =>
 const parseRiskScore = (content: string): number | null => {
   const match = content.match(/Risk Score:\s*(\d+)\s*\/\s*10/i);
   return match ? parseInt(match[1], 10) : null;
+};
+
+/**
+ * Return a modified severity for certain gates based on the proposal type.
+ * - security proposals: risk-threshold promoted from warning → blocker
+ * - release proposals: delivery-feasibility promoted from warning → blocker
+ */
+const getTypeSpecificSeverity = (
+  gateId: string,
+  baseSeverity: GateResult["severity"],
+  proposalType: ProposalType
+): GateResult["severity"] => {
+  if (proposalType === "security" && gateId === "risk-threshold" && baseSeverity === "warning") {
+    return "blocker";
+  }
+  if (proposalType === "release" && gateId === "delivery-feasibility" && baseSeverity === "warning") {
+    return "blocker";
+  }
+  return baseSeverity;
 };
 
 // ── Individual Gates ─────────────────────────────────────────
@@ -210,7 +230,12 @@ export const runGates = (proposal: Proposal): ControlCheckResult => {
 
   // Always run all gates for visibility, but only required ones count for pass/fail
   const allGateIds = [...new Set([...gatesToRun, ...Object.keys(GATES)])];
-  const gates = allGateIds.map((id) => GATES[id](proposal));
+  const gates = allGateIds.map((id) => {
+    const result = GATES[id](proposal);
+    // Apply type-specific severity overrides
+    result.severity = getTypeSpecificSeverity(result.gateId, result.severity, proposal.type);
+    return result;
+  });
 
   const blockers = gates.filter((g) => !g.passed && g.severity === "blocker");
   const requiredBlockers = gates.filter(

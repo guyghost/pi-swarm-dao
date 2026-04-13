@@ -4,7 +4,7 @@ A DAO extension for the [Pi coding agent](https://github.com/badlogic/pi-mono) w
 
 ## What is this?
 
-**pi-swarm-dao** is a Pi extension that implements a four-layer DAO governance system. Seven specialized AI agents analyze proposals in parallel, each from their own domain perspective, then cast weighted votes. The system handles the full lifecycle — from proposal creation through deliberation, quality control, and execution — with a complete audit trail throughout.
+**pi-swarm-dao** is a Pi extension that implements a four-layer DAO governance system. Seven specialized AI agents analyze proposals in parallel, each from their own domain perspective, then cast weighted votes. The system handles the full lifecycle — from proposal creation through deliberation, quality control, and execution — with a complete audit trail throughout. Every proposal must be typed (feature, security, ux, release, or policy), which focuses agent analysis and adjusts quality gate severity.
 
 It installs as a Pi package and adds 11 tools, 5 slash commands, and 3 event hooks to your Pi session.
 
@@ -25,8 +25,11 @@ This runs `dao_setup` automatically and displays the dashboard.
 ## Quick Start
 
 ```
-# 1. Create a proposal interactively
+# 1. Create a proposal interactively (includes type selection)
 > /dao-propose
+
+# Or create directly with a type:
+> dao_propose title="Add dark mode" description="..." type="feature"
 
 # 2. Run swarm deliberation (7 agents analyze + vote in parallel)
 > dao_deliberate proposal_id="prop-001"
@@ -81,6 +84,18 @@ The system is organized in four layers, each with a clear mission:
 
 Add or remove agents with `dao_add_agent` and `dao_remove_agent`. Each agent's model is independently configurable.
 
+## Proposal Types
+
+Every proposal requires a type that scopes agent analysis and adjusts control behavior.
+
+| Type | Emoji | Domain | Example |
+|------|-------|--------|---------|
+| `feature` | ✨ | New functionality | Add search, dark mode, API endpoint |
+| `security` | 🔒 | Permissions, CSP, access, storage | Migrate to OAuth2, tighten CSP headers |
+| `ux` | 🎨 | Popup, onboarding, options, feedback | Redesign onboarding flow, add tooltips |
+| `release` | 📦 | Publication, rollback, version pinning | Ship v2.0, rollback v1.9.3, pin Chrome MVP |
+| `policy` | 📜 | Governance rules, quorum, agent roles | Change quorum to 75%, add "Legal" agent |
+
 ## Tools
 
 | Tool | Description |
@@ -89,7 +104,7 @@ Add or remove agents with `dao_add_agent` and `dao_remove_agent`. Each agent's m
 | `dao_add_agent` | Add a custom agent |
 | `dao_remove_agent` | Remove an agent |
 | `dao_list_agents` | List all registered agents |
-| `dao_propose` | Create a proposal |
+| `dao_propose` | Create a typed proposal (type is required) |
 | `dao_deliberate` | Run full parallel swarm deliberation + weighted vote |
 | `dao_tally` | View detailed vote results |
 | `dao_check` | Run quality control gates before execution |
@@ -144,6 +159,8 @@ Five deterministic quality gates run before execution. No LLM involved — resul
 Seven checklist items are auto-verified:
 
 `security-review` · `data-handling` · `compliance-check` · `specs-written` · `architecture-reviewed` · `rollback-plan` · `monitoring-plan`
+
+**Type-specific severity promotions:** `security` proposals promote `risk-threshold` from warning → blocker. `release` proposals promote `delivery-feasibility` from warning → blocker. These ensure high-stakes proposal types face stricter gates.
 
 ## Project Structure
 

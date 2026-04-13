@@ -47,6 +47,15 @@ export function restoreState(ctx: any): void {
     }
   }
 
+  // Migrate proposals missing the `type` field (backward compatibility)
+  if (restored) {
+    for (const p of currentState.proposals) {
+      if (!p.type) {
+        (p as any).type = "feature"; // Default to "feature" for legacy proposals
+      }
+    }
+  }
+
   if (!restored) {
     currentState = createInitialState();
   }

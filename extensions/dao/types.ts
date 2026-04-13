@@ -2,6 +2,21 @@
 // pi-swarm-dao — Type Definitions
 // ============================================================
 
+/** Typed proposal categories */
+export type ProposalType = "feature" | "security" | "ux" | "release" | "policy";
+
+/** All valid proposal types */
+export const PROPOSAL_TYPES: ProposalType[] = ["feature", "security", "ux", "release", "policy"];
+
+/** Human-readable labels for proposal types */
+export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
+  feature: "✨ Feature",
+  security: "🔒 Security",
+  ux: "🎨 UX",
+  release: "📦 Release",
+  policy: "📜 Policy",
+};
+
 /** Configuration for a DAO agent */
 export interface DAOAgent {
   id: string;
@@ -18,6 +33,7 @@ export interface DAOAgent {
 export interface Proposal {
   id: number;
   title: string;
+  type: ProposalType;
   description: string;
   context?: string; // Additional context
   proposedBy: string; // Agent ID or "user"

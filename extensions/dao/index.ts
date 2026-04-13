@@ -1,8 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@mariozechner/pi-ai";
 
 // Cross-cutting
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
+
+// Types
+import type { ProposalType } from "./types.js";
+import { PROPOSAL_TYPES } from "./types.js";
 
 // Layer 1: Governance
 import {
@@ -73,17 +78,18 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- Open proposals: ${openProposals.length}`;
     if (openProposals.length > 0) {
       for (const p of openProposals) {
-        daoContext += `\n  - #${p.id} "${p.title}" (${p.status})`;
+        daoContext += `\n  - #${p.id} "${p.title}" (${p.type}) (${p.status})`;
       }
     }
     daoContext += `\n- Config: quorum=${state.config.quorumPercent}%, approval=${state.config.approvalThreshold}%, risk=${state.config.riskThreshold}/10`;
     daoContext += `\n\nYou have access to DAO governance tools:`;
-    daoContext += `\n- \`dao_propose\` → create proposals`;
+    daoContext += `\n- \`dao_propose\` → create proposals (types: feature, security, ux, release, policy)`;
     daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote`;
     daoContext += `\n- \`dao_check\` → run control gates on approved proposals before execution`;
     daoContext += `\n- \`dao_plan\` → generate structured delivery plan`;
     daoContext += `\n- \`dao_execute\` → execute controlled/approved proposals`;
     daoContext += `\n- \`dao_audit\` → view full audit trail`;
+    daoContext += `\n\nAvailable proposal types: feature (✨ new functionality), security (🔒 permissions/access), ux (🎨 UI/UX), release (📦 publication/rollback), policy (📜 governance rules).`;
 
     return {
       systemPrompt: event.systemPrompt + daoContext,
@@ -204,13 +210,16 @@ export default function daoExtension(pi: ExtensionAPI) {
     name: "dao_propose",
     label: "DAO Propose",
     description:
-      "Create a new proposal for the DAO to deliberate on. Provide a title, detailed description, and optional context.",
+      "Create a new typed proposal for the DAO to deliberate on. Every proposal must have a type (feature, security, ux, release, or policy). Provide a title, type, detailed description, and optional context.",
     parameters: Type.Object({
       title: Type.String({ description: "Short title for the proposal" }),
+      type: StringEnum(["feature", "security", "ux", "release", "policy"], {
+        description: "Type of proposal: feature, security, ux, release, or policy",
+      }),
       description: Type.String({ description: "Detailed description of what is being proposed" }),
       context: Type.Optional(Type.String({ description: "Additional context (market data, constraints, etc.)" })),
     }),
-    promptSnippet: "dao_propose — Submit a new proposal for DAO deliberation",
+    promptSnippet: "dao_propose — Submit a new typed proposal (feature/security/ux/release/policy) for DAO deliberation",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = getState();
       if (!state.initialized) {
@@ -219,6 +228,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const proposal = createProposal(
         params.title,
+        params.type as ProposalType, // Safe: StringEnum validates at runtime
         params.description,
         "user",
         params.context
@@ -728,6 +738,12 @@ export default function daoExtension(pi: ExtensionAPI) {
       const title = await ctx.ui.input("Proposal Title", "Enter a short title...");
       if (!title) return;
 
+      const selectedType = await ctx.ui.select(
+        "Proposal Type",
+        PROPOSAL_TYPES
+      );
+      if (!selectedType) return;
+
       const description = await ctx.ui.editor(
         "Proposal Description",
         "Describe what you are proposing in detail..."
@@ -748,7 +764,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           )) ?? undefined;
       }
 
-      const proposal = createProposal(title, description, "user", context);
+      const proposal = createProposal(title, selectedType as ProposalType, description, "user", context);
 
       // Audit: proposal created via command
       recordAudit(

@@ -3,6 +3,7 @@ import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { DAOAgent, Proposal, AgentOutput } from "../types.js";
+import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState } from "../persistence.js";
 import { extractAssistantMessage } from "../pi-json.js";
 
@@ -36,7 +37,10 @@ const mapWithConcurrency = async <T, R>(
  * Format a proposal into a prompt for an agent.
  */
 const formatProposalPrompt = (proposal: Proposal): string => {
+  const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
   let prompt = `# Proposal #${proposal.id}: ${proposal.title}\n\n`;
+  prompt += `**Type:** ${typeLabel}\n\n`;
+  prompt += `> Adapt your analysis to this proposal type (${proposal.type}). Focus on aspects most relevant to this domain.\n\n`;
   prompt += `## Description\n${proposal.description}\n`;
   if (proposal.context) {
     prompt += `\n## Additional Context\n${proposal.context}\n`;
