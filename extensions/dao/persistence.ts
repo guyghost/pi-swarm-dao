@@ -54,6 +54,20 @@ export function restoreState(ctx: any): void {
         (p as any).type = "feature"; // Default to "feature" for legacy proposals
       }
     }
+
+    // Migrate agents missing registry fields (backward compatibility)
+    for (const a of currentState.agents) {
+      if (!a.owner) a.owner = "system";
+      if (!a.mission) a.mission = a.description;
+      if (!a.riskLevel) a.riskLevel = "medium";
+      if (!a.authorizedEnvironments) a.authorizedEnvironments = ["dev", "staging", "prod"];
+      if (!a.stopConditions) a.stopConditions = [
+        { type: "timeout", description: "Default timeout", value: "60s" },
+        { type: "error", description: "LLM failure threshold", value: "3" },
+      ];
+      if (!a.kpis) a.kpis = [];
+      if (!a.lastReviewDate) a.lastReviewDate = "2026-04-13";
+    }
   }
 
   if (!restored) {

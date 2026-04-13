@@ -6,7 +6,7 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
 
 // Types
-import type { ProposalType } from "./types.js";
+import type { ProposalType, AgentRiskLevel } from "./types.js";
 import { PROPOSAL_TYPES } from "./types.js";
 
 // Layer 1: Governance
@@ -18,7 +18,7 @@ import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./governance
 import { assertTransition, statusLabel } from "./governance/lifecycle.js";
 
 // Layer 2: Intelligence
-import { initializeAgents, addAgent, removeAgent, getAgent, listAgents, formatAgentsTable } from "./intelligence/agents.js";
+import { initializeAgents, addAgent, removeAgent, getAgent, listAgents, formatAgentsTable, formatAgentCard, formatRegistryTable } from "./intelligence/agents.js";
 import { dispatchSwarm } from "./intelligence/swarm.js";
 import { synthesize } from "./intelligence/synthesis.js";
 
@@ -82,6 +82,15 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
     }
     daoContext += `\n- Config: quorum=${state.config.quorumPercent}%, approval=${state.config.approvalThreshold}%, risk=${state.config.riskThreshold}/10`;
+
+    const riskCounts = agents.reduce((acc, a) => {
+      const level = a.riskLevel ?? "unknown";
+      acc[level] = (acc[level] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const riskSummary = Object.entries(riskCounts).map(([k, v]) => `${k}:${v}`).join(", ");
+    daoContext += `\n- Agent risk profile: ${riskSummary}`;
+
     daoContext += `\n\nYou have access to DAO governance tools:`;
     daoContext += `\n- \`dao_propose\` → create proposals (types: feature, security, ux, release, policy)`;
     daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote`;
@@ -148,10 +157,16 @@ export default function daoExtension(pi: ExtensionAPI) {
       description: Type.String({ description: "What this agent analyzes and outputs" }),
       weight: Type.Number({ description: "Vote weight from 1 (low) to 10 (high)", minimum: 1, maximum: 10 }),
       model: Type.Optional(Type.String({ description: "LLM model override" })),
+      owner: Type.Optional(Type.String({ description: "Who is responsible for this agent" })),
+      mission: Type.Optional(Type.String({ description: "Clear objective for this agent" })),
+      riskLevel: Type.Optional(StringEnum(["low", "medium", "high", "critical"], { description: "Risk classification" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
-        const agent = addAgent(params);
+        const agent = addAgent({
+          ...params,
+          riskLevel: params.riskLevel as AgentRiskLevel | undefined,
+        });
         return toolResult(
           `Agent added: **${agent.name}** (${agent.role}) with weight ${agent.weight}\n\n${formatAgentsTable(listAgents())}`
         );
@@ -192,13 +207,38 @@ export default function daoExtension(pi: ExtensionAPI) {
     name: "dao_list_agents",
     label: "DAO List Agents",
     description: "List all agents in the DAO with their roles and vote weights.",
-    parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+    parameters: Type.Object({
+      detailed: Type.Optional(Type.Boolean({ description: "Show full registry view instead of simple table" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const agents = listAgents();
       if (agents.length === 0) {
         return toolResult("No agents configured. Run `dao_setup` first.");
       }
-      return toolResult(`# DAO Agents\n\n${formatAgentsTable(agents)}`);
+      const output = params.detailed
+        ? formatRegistryTable(agents)
+        : `# DAO Agents\n\n${formatAgentsTable(agents)}`;
+      return toolResult(output);
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_agent_card
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_agent_card",
+    label: "DAO Agent Card",
+    description: "Show the full registry card for a specific agent, including all 11 registry fields.",
+    parameters: Type.Object({
+      agentId: Type.String({ description: "ID of the agent to inspect" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const agent = getAgent(params.agentId);
+      if (!agent) {
+        return toolResult(`Agent "${params.agentId}" not found.`);
+      }
+      return toolResult(formatAgentCard(agent));
     },
   });
 

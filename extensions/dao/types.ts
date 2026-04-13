@@ -17,6 +17,23 @@ export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
   policy: "📜 Policy",
 };
 
+/** Agent risk classification */
+export type AgentRiskLevel = "low" | "medium" | "high" | "critical";
+
+/** Condition under which an agent should stop */
+export interface StopCondition {
+  type: "timeout" | "error" | "threshold" | "manual";
+  description: string;
+  value?: string; // e.g. "30s" for timeout, "3" for retry threshold
+}
+
+/** Key Performance Indicator for an agent */
+export interface AgentKPI {
+  name: string;
+  description: string;
+  target: string; // e.g. "< 30s", "> 80%", "100%"
+}
+
 /** Configuration for a DAO agent */
 export interface DAOAgent {
   id: string;
@@ -26,7 +43,18 @@ export interface DAOAgent {
   weight: number; // Vote weight (1-10)
   systemPrompt: string;
   model?: string; // LLM model override
-  tools?: string[]; // Allowed tools for this agent
+  tools?: string[]; // Allowed tools for this agent (authorizedTools)
+
+  // === Registry Fields ===
+  owner?: string;                    // Who is responsible (default: "system")
+  mission?: string;                  // Clear objective (distinct from description)
+  authorizedInputs?: string[];       // Types of data the agent can receive
+  authorizedData?: string[];         // Data the agent can access
+  riskLevel?: AgentRiskLevel;        // Risk classification
+  authorizedEnvironments?: string[]; // Where the agent can run
+  stopConditions?: StopCondition[];  // When the agent should stop
+  kpis?: AgentKPI[];                 // Performance metrics
+  lastReviewDate?: string;           // ISO 8601 date
 }
 
 /** A proposal submitted to the DAO for deliberation */

@@ -6,6 +6,7 @@ import type {
   ControlCheckResult,
   DeliveryPlan,
   ChecklistItem,
+  AgentRiskLevel,
 } from "./types.js";
 import { PROPOSAL_TYPE_LABELS } from "./types.js";
 
@@ -13,6 +14,17 @@ import { PROPOSAL_TYPE_LABELS } from "./types.js";
 const typeEmoji = (type: Proposal["type"]): string => {
   const label = PROPOSAL_TYPE_LABELS[type];
   return label ? label.split(" ")[0] : "📋";
+};
+
+/** Risk emoji for dashboard table */
+const riskEmoji = (level?: string): string => {
+  switch (level) {
+    case "critical": return "🔴";
+    case "high": return "🟠";
+    case "medium": return "🟡";
+    case "low": return "🟢";
+    default: return "⚪";
+  }
 };
 
 /**
@@ -39,15 +51,15 @@ export const renderDashboard = (state: DAOState): string => {
   } else {
     const totalWeight = state.agents.reduce((s, a) => s + a.weight, 0);
     lines.push(
-      "| # | Agent | Role | Weight | Influence | Model |"
+      "| # | Agent | Role | Weight | Risk | Influence | Model |"
     );
     lines.push(
-      "|---|-------|------|--------|-----------|-------|"
+      "|---|-------|------|--------|------|-----------|-------|"
     );
     state.agents.forEach((a, i) => {
       const influence = ((a.weight / totalWeight) * 100).toFixed(1);
       lines.push(
-        `| ${i + 1} | ${a.name} | ${a.role} | ${a.weight} | ${influence}% | ${a.model ?? "default"} |`
+        `| ${i + 1} | ${a.name} | ${a.role} | ${a.weight} | ${riskEmoji(a.riskLevel)} ${a.riskLevel ?? "unknown"} | ${influence}% | ${a.model ?? "default"} |`
       );
     });
     lines.push(`\n**Total weight:** ${totalWeight}`);

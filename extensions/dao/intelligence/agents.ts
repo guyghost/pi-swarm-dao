@@ -1,4 +1,4 @@
-import type { DAOAgent } from "../types.js";
+import type { DAOAgent, AgentRiskLevel } from "../types.js";
 import { getState, setState } from "../persistence.js";
 import { DEFAULT_AGENTS } from "./default-agents.js";
 
@@ -39,6 +39,17 @@ export const addAgent = (
   const newAgent: DAOAgent = {
     ...agent,
     systemPrompt: agent.systemPrompt ?? buildDefaultPrompt(agent),
+    // Registry defaults
+    owner: agent.owner ?? "user",
+    mission: agent.mission ?? agent.description,
+    riskLevel: agent.riskLevel ?? "medium",
+    authorizedEnvironments: agent.authorizedEnvironments ?? ["dev", "staging", "prod"],
+    stopConditions: agent.stopConditions ?? [
+      { type: "timeout", description: "Default timeout", value: "60s" },
+      { type: "error", description: "LLM failure threshold", value: "3" },
+    ],
+    kpis: agent.kpis ?? [],
+    lastReviewDate: agent.lastReviewDate ?? new Date().toISOString().split("T")[0],
   };
 
   state.agents.push(newAgent);
@@ -89,14 +100,131 @@ export const getTotalWeight = (): number => {
 export const formatAgentsTable = (agents: DAOAgent[]): string => {
   const totalWeight = agents.reduce((sum, a) => sum + a.weight, 0);
   const header =
-    "| Agent | Role | Weight | Model |\n|-------|------|--------|-------|";
+    "| Agent | Role | Weight | Risk | Model |\n|-------|------|--------|------|-------|";
   const rows = agents
     .map(
       (a) =>
-        `| ${a.name} | ${a.role} | ${a.weight}/${totalWeight} | ${a.model ?? "default"} |`,
+        `| ${a.name} | ${a.role} | ${a.weight}/${totalWeight} | ${riskBadge(a.riskLevel)} | ${a.model ?? "default"} |`,
     )
     .join("\n");
   return `${header}\n${rows}`;
+};
+
+/**
+ * Risk level badge with color indicator.
+ */
+const riskBadge = (level?: AgentRiskLevel): string => {
+  switch (level) {
+    case "critical": return "🔴 critical";
+    case "high": return "🟠 high";
+    case "medium": return "🟡 medium";
+    case "low": return "🟢 low";
+    default: return "⚪ unknown";
+  }
+};
+
+/**
+ * Format a full registry card for a single agent.
+ */
+export const formatAgentCard = (agent: DAOAgent): string => {
+  const lines: string[] = [];
+  lines.push(`# 🪪 Agent Card: ${agent.name}`);
+  lines.push("");
+  lines.push(`| Field | Value |`);
+  lines.push(`|-------|-------|`);
+  lines.push(`| **ID** | \`${agent.id}\` |`);
+  lines.push(`| **Name** | ${agent.name} |`);
+  lines.push(`| **Owner** | ${agent.owner ?? "system"} |`);
+  lines.push(`| **Mission** | ${agent.mission ?? agent.description} |`);
+  lines.push(`| **Role** | ${agent.role} |`);
+  lines.push(`| **Weight** | ${agent.weight} |`);
+  lines.push(`| **Risk Level** | ${riskBadge(agent.riskLevel)} |`);
+  lines.push(`| **Model** | ${agent.model ?? "default"} |`);
+  lines.push(`| **Last Review** | ${agent.lastReviewDate ?? "never"} |`);
+  lines.push("");
+
+  // Authorized Inputs
+  lines.push("## 📥 Authorized Inputs");
+  if (agent.authorizedInputs?.length) {
+    lines.push(agent.authorizedInputs.map(i => `- \`${i}\``).join("\n"));
+  } else {
+    lines.push("- *No restrictions defined*");
+  }
+  lines.push("");
+
+  // Authorized Tools
+  lines.push("## 🔧 Authorized Tools");
+  if (agent.tools?.length) {
+    lines.push(agent.tools.map(t => `- \`${t}\``).join("\n"));
+  } else {
+    lines.push("- *No tools (--no-tools)*");
+  }
+  lines.push("");
+
+  // Authorized Data
+  lines.push("## 📊 Authorized Data");
+  if (agent.authorizedData?.length) {
+    lines.push(agent.authorizedData.map(d => `- \`${d}\``).join("\n"));
+  } else {
+    lines.push("- *No restrictions defined*");
+  }
+  lines.push("");
+
+  // Authorized Environments
+  lines.push("## 🌍 Authorized Environments");
+  if (agent.authorizedEnvironments?.length) {
+    lines.push(agent.authorizedEnvironments.map(e => `- \`${e}\``).join("\n"));
+  } else {
+    lines.push("- *All environments*");
+  }
+  lines.push("");
+
+  // Stop Conditions
+  lines.push("## 🛑 Stop Conditions");
+  if (agent.stopConditions?.length) {
+    lines.push("| Type | Description | Value |");
+    lines.push("|------|-------------|-------|");
+    for (const sc of agent.stopConditions) {
+      lines.push(`| ${sc.type} | ${sc.description} | ${sc.value ?? "—"} |`);
+    }
+  } else {
+    lines.push("- *No stop conditions defined*");
+  }
+  lines.push("");
+
+  // KPIs
+  lines.push("## 📈 KPIs");
+  if (agent.kpis?.length) {
+    lines.push("| KPI | Description | Target |");
+    lines.push("|-----|-------------|--------|");
+    for (const kpi of agent.kpis) {
+      lines.push(`| ${kpi.name} | ${kpi.description} | ${kpi.target} |`);
+    }
+  } else {
+    lines.push("- *No KPIs defined*");
+  }
+
+  return lines.join("\n");
+};
+
+/**
+ * Format a compact registry overview of all agents.
+ */
+export const formatRegistryTable = (agents: DAOAgent[]): string => {
+  const lines: string[] = [];
+  lines.push("# 📋 Agent Registry");
+  lines.push("");
+  lines.push("| Agent | Owner | Mission | Risk | Environments | Last Review |");
+  lines.push("|-------|-------|---------|------|--------------|-------------|");
+  for (const a of agents) {
+    const missionText = a.mission ?? a.description;
+    const truncated = missionText.length > 60 ? `${missionText.slice(0, 60)}…` : missionText;
+    const envs = a.authorizedEnvironments?.length ? a.authorizedEnvironments.join(", ") : "all";
+    lines.push(
+      `| ${a.name} | ${a.owner ?? "system"} | ${truncated} | ${riskBadge(a.riskLevel)} | ${envs} | ${a.lastReviewDate ?? "never"} |`
+    );
+  }
+  return lines.join("\n");
 };
 
 /**

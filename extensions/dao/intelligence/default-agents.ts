@@ -9,6 +9,21 @@ export const DEFAULT_AGENTS: DAOAgent[] = [
       "Reframes business needs and user value. Outputs vision, objectives, and hypotheses.",
     weight: 3,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Evaluate proposals from a business strategy perspective, ensuring alignment with product vision and user value",
+    authorizedInputs: ["proposal", "market-data", "user-feedback", "strategic-context"],
+    authorizedData: ["proposals", "votes", "agent-outputs"],
+    riskLevel: "low",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Vote consistency", description: "Vote aligns with analysis content", target: "> 90%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Product Strategist
 
 ## Identity
@@ -69,6 +84,21 @@ Adapt your analysis based on the proposal type:
       "Analyzes client feedback, market, competition, and product signals. Outputs insights and opportunities.",
     weight: 2,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Provide data-driven market and user research to ground DAO decisions in observable evidence",
+    authorizedInputs: ["proposal", "market-data", "competitor-data", "user-signals"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "market-reports"],
+    riskLevel: "low",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Evidence quality", description: "Claims backed by observable evidence", target: "> 80%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Research Agent
 
 ## Identity
@@ -128,6 +158,21 @@ Adapt your analysis based on the proposal type:
       "Proposes functional and technical architecture options. Outputs solution options and impacts.",
     weight: 3,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Design viable architecture options with clear tradeoff analysis for every proposal",
+    authorizedInputs: ["proposal", "technical-context", "integration-maps", "performance-data"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "architecture-docs"],
+    riskLevel: "medium",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Option coverage", description: "Provides 2+ viable options per proposal", target: "100%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Solution Architect
 
 ## Identity
@@ -191,6 +236,21 @@ Adapt your analysis based on the proposal type:
       "Challenges assumptions, assesses risks (security, debt, compliance). Outputs objections, risk score, and guardrails.",
     weight: 3,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Challenge assumptions and identify risks with constructive guardrails to protect against poor decisions",
+    authorizedInputs: ["proposal", "agent-outputs", "security-reports", "compliance-data"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "risk-assessments"],
+    riskLevel: "low",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Mitigation coverage", description: "Every objection includes a mitigation suggestion", target: "100%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Critic / Risk Agent
 
 ## Identity
@@ -256,6 +316,21 @@ Adapt your analysis based on the proposal type:
       "Scores initiatives by impact, cost, risk, and effort. Outputs ranking and roadmap recommendation.",
     weight: 2,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Provide objective scoring and roadmap positioning for every proposal using quantitative metrics",
+    authorizedInputs: ["proposal", "agent-outputs", "roadmap-data", "capacity-data"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "roadmap"],
+    riskLevel: "low",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Scoring consistency", description: "Scores are relative to baseline", target: "> 85%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Prioritization Agent
 
 ## Identity
@@ -321,6 +396,21 @@ Adapt your analysis based on the proposal type:
       "Produces PRD, user stories, acceptance criteria, and backlog. Outputs actionable tickets for dev/test.",
     weight: 1,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Translate approved proposals into precise, actionable specifications with testable acceptance criteria",
+    authorizedInputs: ["proposal", "requirements", "user-stories", "agent-outputs"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "specs"],
+    riskLevel: "low",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Testable criteria", description: "All acceptance criteria are testable", target: "> 95%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Spec Writer
 
 ## Identity
@@ -383,6 +473,21 @@ Adapt your analysis based on the proposal type:
       "Transforms decisions into implementation tasks. Outputs build plan, branches, and CI/CD tasks.",
     weight: 1,
     model: "z.ai/GLM-5.1",
+    owner: "system",
+    mission: "Transform approved proposals into concrete implementation plans with phases, tasks, and rollback strategies",
+    authorizedInputs: ["proposal", "agent-outputs", "specs", "infrastructure-context"],
+    authorizedData: ["proposals", "votes", "agent-outputs", "delivery-plans"],
+    riskLevel: "medium",
+    authorizedEnvironments: ["dev", "staging", "prod"],
+    stopConditions: [
+      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "error", description: "LLM API failure", value: "3" },
+    ],
+    kpis: [
+      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Plan completeness", description: "Every plan includes a rollback strategy", target: "100%" },
+    ],
+    lastReviewDate: "2026-04-13",
     systemPrompt: `# Delivery Agent
 
 ## Identity

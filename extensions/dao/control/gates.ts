@@ -206,6 +206,30 @@ const gateDeliveryFeasibility = (proposal: Proposal): GateResult => {
   };
 };
 
+/**
+ * agent-registry-compliance: Verify all agents have complete registry fields.
+ * PASS if: every agent has owner, mission, riskLevel, and lastReviewDate.
+ */
+const gateRegistryCompliance = (_proposal: Proposal): GateResult => {
+  const agents = getState().agents;
+  const incomplete = agents.filter(a =>
+    !a.owner || !a.mission || !a.riskLevel || !a.lastReviewDate
+  );
+
+  const passed = incomplete.length === 0;
+
+  return {
+    gateId: "agent-registry-compliance",
+    name: "Agent Registry Compliance",
+    passed,
+    severity: "info",
+    message: passed
+      ? `All ${agents.length} agents have complete registry cards`
+      : `${incomplete.length} agent(s) have incomplete registry: ${incomplete.map(a => a.id).join(", ")}`,
+    details: { incompleteAgents: incomplete.map(a => a.id) },
+  };
+};
+
 // ── Gate Registry ────────────────────────────────────────────
 
 type GateFn = (proposal: Proposal) => GateResult;
@@ -216,6 +240,7 @@ const GATES: Record<string, GateFn> = {
   "vote-consensus": gateVoteConsensus,
   "spec-completeness": gateSpecCompleteness,
   "delivery-feasibility": gateDeliveryFeasibility,
+  "agent-registry-compliance": gateRegistryCompliance,
 };
 
 // ── Public API ───────────────────────────────────────────────
