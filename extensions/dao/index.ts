@@ -908,16 +908,30 @@ export default function daoExtension(pi: ExtensionAPI) {
   // ================================================================
 
   pi.registerCommand("dao", {
-    description: "Show the DAO dashboard with agents, proposals, and configuration",
+    description: "Initialize DAO (if needed) and show the dashboard",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
-      const dashboard = renderDashboard(state);
+
+      // Auto-initialize if not yet set up
+      if (!state.initialized) {
+        initializeAgents();
+        recordAudit(
+          0,
+          "governance",
+          "auto_initialized",
+          "system",
+          "DAO auto-initialized via /dao command"
+        );
+      }
+
+      const updatedState = getState();
+      const dashboard = renderDashboard(updatedState);
 
       if (ctx.hasUI) {
         ctx.ui.notify(
-          state.initialized
-            ? `DAO active: ${state.agents.length} agents, ${state.proposals.length} proposals`
-            : "DAO not initialized — use dao_setup",
+          updatedState.initialized
+            ? `DAO active: ${updatedState.agents.length} agents, ${updatedState.proposals.length} proposals`
+            : "DAO initialization failed",
           "info"
         );
       }

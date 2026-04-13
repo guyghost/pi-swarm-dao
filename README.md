@@ -14,13 +14,13 @@ It installs as a Pi package and adds 11 tools, 5 slash commands, and 3 event hoo
 pi install git:github.com/guyghost/pi-swarm-dao
 ```
 
-Initialize the DAO with default agents:
+Initialize the DAO and show the dashboard in one step:
 
 ```
 > /dao
 ```
 
-This runs `dao_setup` automatically and displays the dashboard.
+On first run, this auto-initializes the DAO with 7 default agents and displays the dashboard. On subsequent runs, it just shows the dashboard. No need to call `dao_setup` separately.
 
 ## Quick Start
 
