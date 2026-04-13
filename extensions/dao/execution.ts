@@ -53,7 +53,7 @@ export async function executeProposal(
       "-p",
       "--no-session",
       "--model", model,
-      "--tools", "none",
+      "--no-tools",
       "--append-system-prompt", promptFile,
       `Task: ${executionPrompt}`,
     ];

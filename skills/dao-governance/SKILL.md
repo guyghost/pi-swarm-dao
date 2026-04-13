@@ -1,3 +1,8 @@
+---
+name: dao-governance
+description: DAO governance with 7 specialized AI agents (Strategist, Researcher, Architect, Critic, Prioritizer, Spec Writer, Delivery) that deliberate on proposals through weighted voting. Use when you need structured multi-perspective analysis of a product decision, architecture change, or strategic initiative — or when you want risk assessment, prioritization, and actionable specs from a single deliberation cycle.
+---
+
 # DAO Governance Skill
 
 A decentralized autonomous organization (DAO) of specialized AI agents that deliberate on proposals through weighted voting.

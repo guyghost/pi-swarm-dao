@@ -79,7 +79,7 @@ const runAgent = async (
       "-p",
       "--no-session",
       "--model", model,
-      "--tools", "none",
+      "--no-tools",
       "--append-system-prompt", promptFile,
       `Task: ${taskPrompt}`,
     ];
