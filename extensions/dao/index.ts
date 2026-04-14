@@ -461,6 +461,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Tally votes (with per-type quorum)
       const tally = tallyVotes(proposal.id, votes, proposal.type);
 
+      // Store deliberation results BEFORE scoring so agent outputs are available
+      const finalStatus = tally.approved ? "approved" : "rejected";
+      storeDeliberationResults(proposal.id, agentOutputs, synthDoc, votes);
+
       // === COMPOSITE SCORING ===
       const proposal_ = getProposal(params.proposalId)!; // re-fetch with outputs
       const axes = parseScoresFromOutput(proposal_);
@@ -477,9 +481,6 @@ export default function daoExtension(pi: ExtensionAPI) {
       const zone = classifyRiskZone(proposal_);
       proposal_.riskZone = zone;
 
-      // Update proposal with results
-      const finalStatus = tally.approved ? "approved" : "rejected";
-      storeDeliberationResults(proposal.id, agentOutputs, synthDoc, votes);
       updateProposalStatus(proposal.id, finalStatus);
 
       // Audit: votes tallied

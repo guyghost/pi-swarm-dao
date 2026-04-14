@@ -17,12 +17,63 @@ export function setState(state: DAOState): void {
   currentState = state;
 }
 
+const TERMINAL_STATES = new Set(["executed", "rejected", "failed"]);
+const MAX_AUDIT_LOG = 200;
+
+/**
+ * Compact state to reduce memory footprint.
+ * - Trims large text fields on terminal proposals (agentOutputs, synthesis, executionResult)
+ * - Caps the audit log to the most recent entries
+ */
+export function compactState(): void {
+  for (const p of currentState.proposals) {
+    if (!TERMINAL_STATES.has(p.status)) continue;
+
+    // Trim agentOutputs content
+    if (p.agentOutputs) {
+      for (const output of p.agentOutputs) {
+        if (output.content && output.content.length > 500) {
+          output.content = output.content.slice(0, 500) + "\n\n[…trimmed]";
+        }
+      }
+    }
+
+    // Trim synthesis
+    if (p.synthesis && p.synthesis.length > 1000) {
+      p.synthesis = p.synthesis.slice(0, 1000) + "\n\n[…trimmed]";
+    }
+
+    // Trim executionResult
+    if (p.executionResult && p.executionResult.length > 1000) {
+      p.executionResult = p.executionResult.slice(0, 1000) + "\n\n[…trimmed]";
+    }
+  }
+
+  // Cap audit log to last MAX_AUDIT_LOG entries
+  if (currentState.auditLog.length > MAX_AUDIT_LOG) {
+    currentState.auditLog = currentState.auditLog.slice(-MAX_AUDIT_LOG);
+  }
+
+  setState(currentState);
+}
+
 /**
  * Create a state snapshot suitable for tool result `details`.
  * Called by every tool that modifies state.
  */
 export function createStateSnapshot(): { daoState: DAOState } {
-  return { daoState: structuredClone(currentState) };
+  compactState();
+  // Shallow clone top-level, sharing references to immutable historical data
+  const snapshot: DAOState = {
+    ...currentState,
+    proposals: currentState.proposals.map(p => ({ ...p })),
+    agents: [...currentState.agents],
+    auditLog: [...currentState.auditLog],
+    controlResults: { ...currentState.controlResults },
+    deliveryPlans: { ...currentState.deliveryPlans },
+    artefacts: { ...currentState.artefacts },
+  };
+  return { daoState: snapshot };
 }
 
 /**
@@ -34,9 +85,10 @@ export function createStateSnapshot(): { daoState: DAOState } {
 export function restoreState(ctx: any): void {
   let restored = false;
 
-  // Scan the current branch for the latest state snapshot
-  for (const entry of ctx.sessionManager.getBranch()) {
-    // Look for tool results from our DAO tools that contain state snapshots
+  // Scan the branch in reverse to find the most recent state snapshot
+  const branch = ctx.sessionManager.getBranch();
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const entry = branch[i];
     if (
       entry.type === "message" &&
       entry.message.role === "toolResult" &&
@@ -44,6 +96,7 @@ export function restoreState(ctx: any): void {
     ) {
       currentState = entry.message.details.daoState as DAOState;
       restored = true;
+      break;
     }
   }
 

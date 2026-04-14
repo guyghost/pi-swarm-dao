@@ -59,31 +59,49 @@ export async function executeProposal(
       `Task: ${executionPrompt}`,
     ];
 
+    /** Process-level timeout (180s — execution takes longer than deliberation). */
+    const EXECUTION_TIMEOUT_MS = 180_000;
+    /** Grace period after SIGTERM before force-killing with SIGKILL. */
+    const SIGKILL_GRACE_MS = 5_000;
+
     return await new Promise<string>((resolve, reject) => {
       const proc = spawn("pi", args, {
         cwd: process.cwd(),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
+        // env omitted — spawn inherits process.env by default
       });
 
-      let stdout = "";
-      let stderr = "";
+      // MAJOR-1: Buffer array avoids GC churn from repeated string concatenation
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
 
       proc.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
+        stdoutChunks.push(data);
       });
 
       proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        stderrChunks.push(data);
       });
 
-      // Handle abort
-      const onAbort = () => {
+      // Track SIGKILL escalation timer so it can be cleared on close/error
+      let killTimerId: ReturnType<typeof setTimeout> | undefined;
+      // Track process-level timeout so it can be cleared on close/error
+      let timeoutTimerId: ReturnType<typeof setTimeout> | undefined;
+      // Flag to distinguish timeout from normal exit
+      let timedOut = false;
+
+      /** Send SIGTERM, then escalate to SIGKILL after grace period. */
+      const escalateKill = () => {
         proc.kill("SIGTERM");
-        setTimeout(() => {
+        killTimerId = setTimeout(() => {
           if (!proc.killed) proc.kill("SIGKILL");
-        }, 5000);
+        }, SIGKILL_GRACE_MS);
+      };
+
+      // Handle external abort (AbortSignal)
+      const onAbort = () => {
+        escalateKill();
       };
 
       if (signal) {
@@ -94,8 +112,33 @@ export async function executeProposal(
         }
       }
 
+      // Process-level timeout: kill if execution exceeds limit
+      timeoutTimerId = setTimeout(() => {
+        timedOut = true;
+        escalateKill();
+      }, EXECUTION_TIMEOUT_MS);
+
       proc.on("close", (code) => {
+        // CRITICAL-1: Clear orphaned timers to prevent memory leaks
+        if (killTimerId) clearTimeout(killTimerId);
+        if (timeoutTimerId) clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
+
+        // Convert buffered chunks to strings
+        const stdout = Buffer.concat(stdoutChunks).toString();
+        const stderr = Buffer.concat(stderrChunks).toString();
+        stdoutChunks.length = 0;
+        stderrChunks.length = 0;
+
+        if (timedOut) {
+          reject(
+            new Error(
+              `Execution agent timed out after ${EXECUTION_TIMEOUT_MS / 1000}s`
+            )
+          );
+          return;
+        }
+
         const content = extractAssistantMessage(stdout);
 
         if (code !== 0 && !content) {
@@ -111,6 +154,8 @@ export async function executeProposal(
       });
 
       proc.on("error", (err) => {
+        if (killTimerId) clearTimeout(killTimerId);
+        if (timeoutTimerId) clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
         reject(new Error(`Failed to spawn execution agent: ${err.message}`));
       });

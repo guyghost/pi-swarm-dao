@@ -9,14 +9,21 @@
  * falling back to accumulated text_delta events.
  */
 export function extractAssistantMessage(jsonStream: string): string {
-  const lines = jsonStream.split("\n").filter((l) => l.trim());
   let fullText = "";
+  let start = 0;
 
-  for (const line of lines) {
+  while (start < jsonStream.length) {
+    let end = jsonStream.indexOf("\n", start);
+    if (end === -1) end = jsonStream.length;
+
+    const line = jsonStream.substring(start, end).trim();
+    start = end + 1;
+
+    if (!line) continue;
+
     try {
       const event = JSON.parse(line);
 
-      // Accumulate text deltas from message_update events
       if (
         event.type === "message_update" &&
         event.assistantMessageEvent?.type === "text_delta"
@@ -24,7 +31,6 @@ export function extractAssistantMessage(jsonStream: string): string {
         fullText += event.assistantMessageEvent.delta;
       }
 
-      // Or capture the final message content from message_end
       if (event.type === "message_end" && event.message?.content) {
         const textBlocks = event.message.content
           .filter((b: any) => b.type === "text")
@@ -38,6 +44,5 @@ export function extractAssistantMessage(jsonStream: string): string {
     }
   }
 
-  // Fall back to accumulated text deltas
   return fullText;
 }

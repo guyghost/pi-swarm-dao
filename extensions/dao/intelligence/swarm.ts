@@ -89,28 +89,61 @@ const runAgent = async (
     ];
 
     return await new Promise<AgentOutput>((resolve) => {
+      // spawn inherits process.env by default — no need to copy it
       const proc = spawn("pi", args, {
         cwd: process.cwd(),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
       });
 
-      let stdout = "";
-      let stderr = "";
+      // Accumulate stdout/stderr as Buffers to avoid GC pressure from repeated
+      // string concatenation with 4 concurrent processes
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
 
       proc.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
+        stdoutChunks.push(data);
       });
 
       proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        stderrChunks.push(data);
       });
+
+      // Parse timeout from agent stopConditions (e.g. "60s" → 60000ms)
+      const parseTimeoutMs = (): number => {
+        const timeoutCondition = agent.stopConditions?.find(
+          (c) => c.type === "timeout"
+        );
+        if (!timeoutCondition?.value) return 120_000;
+        const match = timeoutCondition.value.match(/^(\d+)s$/);
+        return match ? parseInt(match[1], 10) * 1000 : 120_000;
+      };
+      const timeoutMs = parseTimeoutMs();
+      let timedOut = false;
+
+      // Guard to prevent timeout and abort from racing to double-kill
+      let killing = false;
+      let killTimerId: ReturnType<typeof setTimeout> | undefined;
+
+      const timeoutId = setTimeout(() => {
+        if (killing) return;
+        killing = true;
+        timedOut = true;
+        proc.kill("SIGTERM");
+        // Schedule SIGKILL escalation and track the timer so we can
+        // cancel it if the process exits before the deadline
+        killTimerId = setTimeout(() => {
+          if (!proc.killed) proc.kill("SIGKILL");
+        }, 5000);
+      }, timeoutMs);
 
       // Handle abort
       const onAbort = () => {
+        if (killing) return;
+        killing = true;
+        clearTimeout(timeoutId);
         proc.kill("SIGTERM");
-        setTimeout(() => {
+        killTimerId = setTimeout(() => {
           if (!proc.killed) proc.kill("SIGKILL");
         }, 5000);
       };
@@ -124,10 +157,30 @@ const runAgent = async (
       }
 
       proc.on("close", (code) => {
+        clearTimeout(timeoutId);
+        if (killTimerId) clearTimeout(killTimerId);
         signal?.removeEventListener("abort", onAbort);
+
+        // Convert accumulated buffers to strings and release references immediately
+        const stdout = Buffer.concat(stdoutChunks).toString();
+        const stderr = Buffer.concat(stderrChunks).toString();
+        stdoutChunks.length = 0;
+        stderrChunks.length = 0;
 
         // Parse the JSON events from stdout to extract the assistant's message
         const content = extractAssistantMessage(stdout);
+
+        if (timedOut) {
+          resolve({
+            agentId: agent.id,
+            agentName: agent.name,
+            role: agent.role,
+            content: content || "",
+            durationMs: Date.now() - startTime,
+            error: `Agent timed out after ${timeoutMs / 1000}s`,
+          });
+          return;
+        }
 
         if (code !== 0 && !content) {
           resolve({
@@ -151,6 +204,8 @@ const runAgent = async (
       });
 
       proc.on("error", (err) => {
+        clearTimeout(timeoutId);
+        if (killTimerId) clearTimeout(killTimerId);
         signal?.removeEventListener("abort", onAbort);
         resolve({
           agentId: agent.id,
