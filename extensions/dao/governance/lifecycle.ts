@@ -39,7 +39,7 @@ export const TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
   controlled: ["executed", "failed"],
   rejected: [],
   executed: [],
-  failed: [],
+  failed: ["controlled"],
 };
 
 /**

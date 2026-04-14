@@ -988,6 +988,12 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
       }
 
+      // Allow retry from failed status — transition back to controlled first
+      if (proposal.status === "failed") {
+        assertTransition(proposal.status, "controlled");
+        updateProposalStatus(proposal.id, "controlled");
+      }
+
       if (proposal.status !== "approved" && proposal.status !== "controlled") {
         return toolResult(
           `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). It must pass deliberation and control gates first.`

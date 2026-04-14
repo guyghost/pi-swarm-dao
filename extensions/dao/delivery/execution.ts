@@ -32,9 +32,9 @@ export async function executeProposal(
     );
   }
 
-  if (proposal.status !== "approved") {
+  if (proposal.status !== "approved" && proposal.status !== "controlled") {
     throw new Error(
-      `Proposal #${proposal.id} is not approved (status: ${proposal.status}). Only approved proposals can be executed.`
+      `Proposal #${proposal.id} is not approved (status: ${proposal.status}). Only approved or controlled proposals can be executed.`
     );
   }
 
