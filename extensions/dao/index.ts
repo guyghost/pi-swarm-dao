@@ -748,16 +748,36 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Parse votes from each agent output
       const votes = agentOutputs.map((output) => {
         const agent = agents.find((a) => a.id === output.agentId);
-        if (output.error || !output.content) {
+        const weight = agent?.weight ?? 1;
+
+        // If there's content, always try to parse a vote from it —
+        // even if the agent timed out, partial output may contain a vote
+        if (output.content) {
+          const parsed = parseVoteFromOutput(output.agentId, output.agentName, weight, output.content);
+          // Use the parsed vote if it's a real vote (not a parsing failure)
+          if (parsed.position !== "abstain" || parsed.reasoning !== "No vote section found in agent output") {
+            return parsed;
+          }
+        }
+
+        // No content or vote parsing failed — fall back to abstain
+        if (output.error) {
           return {
             agentId: output.agentId,
             agentName: output.agentName,
             position: "abstain" as const,
-            reasoning: output.error ?? "No output produced",
-            weight: agent?.weight ?? 1,
+            reasoning: output.error,
+            weight,
           };
         }
-        return parseVoteFromOutput(output.agentId, output.agentName, agent?.weight ?? 1, output.content);
+
+        return {
+          agentId: output.agentId,
+          agentName: output.agentName,
+          position: "abstain" as const,
+          reasoning: "No output produced",
+          weight,
+        };
       });
 
       // Synthesize results

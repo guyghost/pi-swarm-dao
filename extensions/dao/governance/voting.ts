@@ -16,10 +16,24 @@ export const parseVoteFromOutput = (
   output: string
 ): Vote => {
   const voteSection = output.match(
-    /##\s*Vote\s*\n([\s\S]*?)(?=\n##\s|\n---|\s*$)/i
+    /#{2,}\s*\*{0,2}Vote\*{0,2}\s*\r?\n([\s\S]*?)(?=\n#{2,}\s|\n---|\s*$)/i
   );
 
   if (!voteSection) {
+    // Fallback: try to find Position/Reasoning pattern without heading
+    const fallback = output.match(
+      /\*?\*?Position:?\*?\*?\s*(for|against|abstain)[\s\S]*?\*?\*?Reasoning:?\*?\*?\s*(.+?)(?:\n|$)/i
+    );
+    if (fallback) {
+      return {
+        agentId,
+        agentName,
+        position: fallback[1].toLowerCase() as VotePosition,
+        reasoning: fallback[2].trim(),
+        weight,
+      };
+    }
+
     return {
       agentId,
       agentName,

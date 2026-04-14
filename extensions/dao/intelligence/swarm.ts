@@ -246,16 +246,59 @@ export const dispatchSwarm = async (
   const maxConcurrent = getState().config.maxConcurrent;
 
   let completed = 0;
+  const totalAgents = agents.length;
   const outputs = await mapWithConcurrency(
     agents,
     maxConcurrent,
     async (agent) => {
       const output = await runAgent(agent, proposal, signal);
       completed++;
-      onProgress?.(completed, agents.length, agent.name);
+      onProgress?.(completed, totalAgents, agent.name);
       return output;
     }
   );
+
+  // Retry timed-out agents once with 1.5x timeout
+  const timedOutIndices: number[] = [];
+  for (let i = 0; i < outputs.length; i++) {
+    if (outputs[i].error?.includes("timed out")) {
+      timedOutIndices.push(i);
+    }
+  }
+
+  if (timedOutIndices.length > 0 && !signal?.aborted) {
+    const retryAgents = timedOutIndices.map((i) => {
+      const original = agents[i];
+      // Increase timeout by 1.5x for retry
+      const retryStopConditions = (original.stopConditions ?? []).map((c) => {
+        if (c.type === "timeout" && c.value) {
+          const match = c.value.match(/^(\d+)s$/);
+          if (match) {
+            const newTimeout = Math.round(parseInt(match[1], 10) * 1.5);
+            return { ...c, value: `${newTimeout}s` };
+          }
+        }
+        return c;
+      });
+      return { ...original, stopConditions: retryStopConditions };
+    });
+
+    const retryOutputs = await mapWithConcurrency(
+      retryAgents,
+      maxConcurrent,
+      async (agent) => {
+        const output = await runAgent(agent, proposal, signal);
+        completed++;
+        onProgress?.(completed, totalAgents + timedOutIndices.length, `${agent.name} (retry)`);
+        return output;
+      }
+    );
+
+    // Replace timed-out outputs with retry results
+    for (let j = 0; j < timedOutIndices.length; j++) {
+      outputs[timedOutIndices[j]] = retryOutputs[j];
+    }
+  }
 
   return outputs;
 };

@@ -17,11 +17,11 @@ export const DEFAULT_AGENTS: DAOAgent[] = [
     riskLevel: "low",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Vote consistency", description: "Vote aligns with analysis content", target: "> 90%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -93,11 +93,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "low",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Evidence quality", description: "Claims backed by observable evidence", target: "> 80%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -172,11 +172,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "medium",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Option coverage", description: "Provides 2+ viable options per proposal", target: "100%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -255,11 +255,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "low",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Mitigation coverage", description: "Every objection includes a mitigation suggestion", target: "100%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -339,11 +339,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "low",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Scoring consistency", description: "Scores are relative to baseline", target: "> 85%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -420,11 +420,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "low",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 45s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Testable criteria", description: "All acceptance criteria are testable", target: "> 95%" },
     ],
     lastReviewDate: "2026-04-13",
@@ -501,11 +501,11 @@ Adapt your analysis based on the proposal type:
     riskLevel: "medium",
     authorizedEnvironments: ["dev", "staging", "prod"],
     stopConditions: [
-      { type: "timeout", description: "Maximum deliberation time", value: "60s" },
+      { type: "timeout", description: "Maximum deliberation time", value: "120s" },
       { type: "error", description: "LLM API failure", value: "3" },
     ],
     kpis: [
-      { name: "Response time", description: "Time to produce analysis", target: "< 50s" },
+      { name: "Response time", description: "Time to produce analysis", target: "< 90s" },
       { name: "Plan completeness", description: "Every plan includes a rollback strategy", target: "100%" },
     ],
     lastReviewDate: "2026-04-13",
