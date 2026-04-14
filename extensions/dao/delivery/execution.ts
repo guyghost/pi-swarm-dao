@@ -169,8 +169,17 @@ export async function executeProposal(
   }
 }
 
+/** Max chars for synthesis in execution prompt (prevents oversized prompts). */
+const MAX_SYNTHESIS_CHARS = 1_500;
+/** Max chars per vote reasoning in execution prompt. */
+const MAX_VOTE_REASONING_CHARS = 200;
+
 /**
- * Build the execution prompt with full deliberation context.
+ * Build the execution prompt with deliberation context.
+ *
+ * Prompt is kept concise to avoid LLM inference timeouts.
+ * Deliberation synthesis and vote reasoning are truncated —
+ * the execution agent needs the gist, not the full transcript.
  */
 const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
   const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
@@ -184,23 +193,29 @@ const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
   }
 
   if (proposal.synthesis) {
-    prompt += `## Deliberation Synthesis\n${proposal.synthesis}\n\n`;
+    const truncated = proposal.synthesis.length > MAX_SYNTHESIS_CHARS
+      ? proposal.synthesis.slice(0, MAX_SYNTHESIS_CHARS) + "\n\n[…synthesis truncated for execution]"
+      : proposal.synthesis;
+    prompt += `## Deliberation Synthesis (summary)\n${truncated}\n\n`;
   }
 
-  // Include vote summary
+  // Include concise vote summary
   if (proposal.votes.length > 0) {
-    prompt += `## Vote Results\n`;
+    prompt += `## Vote Summary\n`;
     for (const v of proposal.votes) {
-      prompt += `- **${v.agentName}** voted **${v.position}**: ${v.reasoning}\n`;
+      const reasoning = v.reasoning.length > MAX_VOTE_REASONING_CHARS
+        ? v.reasoning.slice(0, MAX_VOTE_REASONING_CHARS) + "…"
+        : v.reasoning;
+      prompt += `- **${v.agentName}** (${v.weight}) **${v.position}**: ${reasoning}\n`;
     }
     prompt += `\n`;
   }
 
   prompt += `## Your Task\n`;
   prompt += `This proposal has been APPROVED by the DAO. `;
-  prompt += `Transform it into a concrete, actionable execution plan. `;
-  prompt += `Consider the synthesis above, address any concerns raised by other agents, `;
-  prompt += `and produce a detailed implementation roadmap.`;
+  prompt += `Produce a concise, actionable execution plan with phased tasks. `;
+  prompt += `Focus on implementation steps, branch strategy, and rollback plan. `;
+  prompt += `Be brief — avoid restating the proposal.`;
 
   return prompt;
 };
