@@ -277,7 +277,221 @@ const gateZoneCompliance = (proposal: Proposal): GateResult => {
   };
 };
 
-// ── Gate Registry (continued) ────────────────────────────────
+// ── Self-Amendment Gates ──────────────────────────────────────
+
+/**
+ * self-amendment-safety: Verify post-amendment state invariants.
+ * PASS if: amendment preview doesn't violate minimum agents (≥3), total weight (≥5), quorum floor.
+ * Only runs for governance-change proposals with an amendment payload.
+ */
+const gateSelfAmendmentSafety = (proposal: Proposal): GateResult => {
+  // Only applies to governance-change proposals with amendment payload
+  if (proposal.type !== "governance-change" || !proposal.amendmentPayload) {
+    return {
+      gateId: "self-amendment-safety",
+      name: "Self-Amendment Safety",
+      passed: true,
+      severity: "blocker",
+      message: "Not a self-amendment — gate not applicable",
+    };
+  }
+
+  const state = getState();
+  const errors: string[] = [];
+  const payload = proposal.amendmentPayload;
+
+  // Simulate the amendment to check invariants
+  if (payload.type === "agent-remove") {
+    const remaining = state.agents.length - 1;
+    if (remaining < 3) errors.push(`Would leave only ${remaining} agents (min 3)`);
+    const removedAgent = state.agents.find(a => a.id === payload.agentId);
+    const newWeight = state.agents.reduce((s, a) => s + a.weight, 0) - (removedAgent?.weight ?? 0);
+    if (newWeight < 5) errors.push(`Total weight would drop to ${newWeight} (min 5)`);
+  }
+
+  if (payload.type === "agent-update" && payload.changes.weight !== undefined) {
+    const agent = state.agents.find(a => a.id === payload.agentId);
+    const oldWeight = agent?.weight ?? 0;
+    const delta = payload.changes.weight - oldWeight;
+    const newTotal = state.agents.reduce((s, a) => s + a.weight, 0) + delta;
+    if (newTotal < 5) errors.push(`Total weight would drop to ${newTotal} (min 5)`);
+  }
+
+  if (payload.type === "config-update" && payload.changes.quorumPercent !== undefined) {
+    const floor = state.config.quorumFloor ?? 60;
+    if (payload.changes.quorumPercent < floor) {
+      errors.push(`Quorum ${payload.changes.quorumPercent}% below floor ${floor}%`);
+    }
+  }
+
+  if (payload.type === "quorum-update") {
+    const floor = state.config.quorumFloor ?? 60;
+    for (const [type, changes] of Object.entries(payload.typeQuorum)) {
+      if (type === "governance-change" && changes?.quorumPercent !== undefined) {
+        if (changes.quorumPercent < floor) {
+          errors.push(`governance-change quorum ${changes.quorumPercent}% below floor ${floor}%`);
+        }
+      }
+    }
+  }
+
+  const passed = errors.length === 0;
+  return {
+    gateId: "self-amendment-safety",
+    name: "Self-Amendment Safety",
+    passed,
+    severity: "blocker",
+    message: passed
+      ? "Self-amendment safety checks passed"
+      : `Self-amendment would violate invariants: ${errors.join("; ")}`,
+    details: { errors },
+  };
+};
+
+/**
+ * weight-conservation: Warn if a weight change exceeds ±30% of current value.
+ * Only runs for agent-update with weight changes.
+ */
+const gateWeightConservation = (proposal: Proposal): GateResult => {
+  if (
+    proposal.type !== "governance-change" ||
+    !proposal.amendmentPayload ||
+    proposal.amendmentPayload.type !== "agent-update" ||
+    proposal.amendmentPayload.changes.weight === undefined
+  ) {
+    return {
+      gateId: "weight-conservation",
+      name: "Weight Conservation",
+      passed: true,
+      severity: "warning",
+      message: "No weight change — gate not applicable",
+    };
+  }
+
+  const payload = proposal.amendmentPayload;
+  const current = getState().agents.find(a => a.id === payload.agentId);
+  if (!current) {
+    return {
+      gateId: "weight-conservation",
+      name: "Weight Conservation",
+      passed: false,
+      severity: "warning",
+      message: `Agent "${payload.agentId}" not found`,
+    };
+  }
+
+  const oldWeight = current.weight;
+  const newWeight = payload.changes.weight!;
+  const changePct = Math.abs(newWeight - oldWeight) / oldWeight * 100;
+  const passed = changePct <= 30;
+
+  return {
+    gateId: "weight-conservation",
+    name: "Weight Conservation",
+    passed,
+    severity: "warning",
+    message: passed
+      ? `Weight change ${oldWeight}→${newWeight} (${changePct.toFixed(0)}%) within 30% threshold`
+      : `Weight change ${oldWeight}→${newWeight} (${changePct.toFixed(0)}%) exceeds 30% threshold — review recommended`,
+    details: { oldWeight, newWeight, changePct: Math.round(changePct) },
+  };
+};
+
+/**
+ * prompt-integrity: Verify updated system prompts contain required sections.
+ * Required sections: "## Vote" and "## Constraints"
+ */
+const gatePromptIntegrity = (proposal: Proposal): GateResult => {
+  if (
+    proposal.type !== "governance-change" ||
+    !proposal.amendmentPayload ||
+    proposal.amendmentPayload.type !== "agent-update" ||
+    !proposal.amendmentPayload.changes.systemPrompt
+  ) {
+    return {
+      gateId: "prompt-integrity",
+      name: "Prompt Integrity",
+      passed: true,
+      severity: "warning",
+      message: "No prompt change — gate not applicable",
+    };
+  }
+
+  const newPrompt = proposal.amendmentPayload.changes.systemPrompt;
+  const missing: string[] = [];
+  if (!/##\s*Vote/i.test(newPrompt)) missing.push("## Vote");
+  if (!/##\s*Constraints/i.test(newPrompt)) missing.push("## Constraints");
+
+  const passed = missing.length === 0;
+  return {
+    gateId: "prompt-integrity",
+    name: "Prompt Integrity",
+    passed,
+    severity: "warning",
+    message: passed
+      ? "System prompt contains all required sections (Vote, Constraints)"
+      : `System prompt missing required sections: ${missing.join(", ")}`,
+    details: { missingSections: missing },
+  };
+};
+
+/**
+ * circular-amendment: Block an agent from voting to increase its own power.
+ * An amendment initiated by an agent that increases that agent's weight is circular.
+ */
+const gateCircularAmendment = (proposal: Proposal): GateResult => {
+  if (
+    proposal.type !== "governance-change" ||
+    !proposal.amendmentPayload ||
+    !proposal.amendmentOrigin ||
+    proposal.amendmentOrigin.source !== "agent"
+  ) {
+    return {
+      gateId: "circular-amendment",
+      name: "Circular Amendment",
+      passed: true,
+      severity: "blocker",
+      message: "Not an agent-initiated amendment — gate not applicable",
+    };
+  }
+
+  const originAgentId = proposal.amendmentOrigin.agentId!;
+  const payload = proposal.amendmentPayload;
+  let isCircular = false;
+  let reason = "";
+
+  // Agent trying to increase its own weight
+  if (payload.type === "agent-update" && payload.agentId === originAgentId && payload.changes.weight !== undefined) {
+    const current = getState().agents.find(a => a.id === originAgentId);
+    if (current && payload.changes.weight > current.weight) {
+      isCircular = true;
+      reason = `Agent "${originAgentId}" cannot increase its own weight (${current.weight} → ${payload.changes.weight})`;
+    }
+  }
+
+  // Agent trying to update its own council role to lead
+  if (payload.type === "council-update" && payload.agentId === originAgentId) {
+    const currentLeadRoles = getState().agents.find(a => a.id === originAgentId)?.councils?.filter(c => c.role === "lead").length ?? 0;
+    const newLeadRoles = payload.councils.filter(c => c.role === "lead").length;
+    if (newLeadRoles > currentLeadRoles) {
+      isCircular = true;
+      reason = `Agent "${originAgentId}" cannot promote itself to additional lead roles`;
+    }
+  }
+
+  return {
+    gateId: "circular-amendment",
+    name: "Circular Amendment",
+    passed: !isCircular,
+    severity: "blocker",
+    message: isCircular
+      ? `🔄 Circular amendment blocked: ${reason}`
+      : "No circular amendment detected",
+    details: { isCircular, originAgentId },
+  };
+};
+
+// ── Gate Registry ────────────────────────────────────────────
 
 type GateFn = (proposal: Proposal) => GateResult;
 
@@ -289,6 +503,10 @@ const GATES: Record<string, GateFn> = {
   "delivery-feasibility": gateDeliveryFeasibility,
   "agent-registry-compliance": gateRegistryCompliance,
   "zone-compliance": gateZoneCompliance,
+  "self-amendment-safety": gateSelfAmendmentSafety,
+  "weight-conservation": gateWeightConservation,
+  "prompt-integrity": gatePromptIntegrity,
+  "circular-amendment": gateCircularAmendment,
 };
 
 // ── Public API ───────────────────────────────────────────────

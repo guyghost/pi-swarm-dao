@@ -212,6 +212,94 @@ export type ProposalStatus =
   | "executed"
   | "failed";
 
+// ── Self-Amending Types ──────────────────────────────────────
+
+/** What kind of amendment is being proposed */
+export type AmendmentType =
+  | "agent-update"
+  | "agent-add"
+  | "agent-remove"
+  | "config-update"
+  | "quorum-update"
+  | "gate-update"
+  | "council-update";
+
+/** Who initiated the amendment */
+export interface AmendmentOrigin {
+  source: "human" | "agent";
+  agentId?: string;
+}
+
+/** Lifecycle states for an amendment */
+export type AmendmentState =
+  | "pending-vote"
+  | "approved-pending-human"
+  | "approved"
+  | "executed"
+  | "rolled-back";
+
+/** Payload for agent-update amendments */
+export interface AgentUpdatePayload {
+  type: "agent-update";
+  agentId: string;
+  changes: Partial<Omit<DAOAgent, "id">>;
+}
+
+/** Payload for agent-add amendments */
+export interface AgentAddPayload {
+  type: "agent-add";
+  agent: Omit<DAOAgent, "systemPrompt"> & { systemPrompt?: string };
+}
+
+/** Payload for agent-remove amendments */
+export interface AgentRemovePayload {
+  type: "agent-remove";
+  agentId: string;
+}
+
+/** Payload for config-update amendments */
+export interface ConfigUpdatePayload {
+  type: "config-update";
+  changes: Partial<Omit<DAOConfig, "typeQuorum">>;
+}
+
+/** Payload for quorum-update amendments */
+export interface QuorumUpdatePayload {
+  type: "quorum-update";
+  typeQuorum: Partial<Record<ProposalType, Partial<TypeQuorumConfig>>>;
+}
+
+/** Payload for gate-update amendments */
+export interface GateUpdatePayload {
+  type: "gate-update";
+  addGates?: string[];
+  removeGates?: string[];
+}
+
+/** Payload for council-update amendments */
+export interface CouncilUpdatePayload {
+  type: "council-update";
+  agentId: string;
+  councils: CouncilMembership[];
+}
+
+/** Discriminated union of all amendment payloads */
+export type AmendmentPayload =
+  | AgentUpdatePayload
+  | AgentAddPayload
+  | AgentRemovePayload
+  | ConfigUpdatePayload
+  | QuorumUpdatePayload
+  | GateUpdatePayload
+  | CouncilUpdatePayload;
+
+/** Snapshot of state before amendment was applied (for rollback) */
+export interface AmendmentSnapshot {
+  agents: DAOAgent[];
+  config: DAOConfig;
+  capturedAt: string;
+}
+
 // ── Core Domain Types ────────────────────────────────────────
 
 /** Agent risk classification */
@@ -291,6 +379,12 @@ export interface Proposal {
   // Postmortem
   postmortem?: Postmortem;
 
+  // Self-Amending
+  amendmentPayload?: AmendmentPayload;
+  amendmentOrigin?: AmendmentOrigin;
+  amendmentState?: AmendmentState;
+  preAmendmentSnapshot?: AmendmentSnapshot;
+
   createdAt: string;
   resolvedAt?: string;
 }
@@ -342,6 +436,8 @@ export interface DAOConfig {
   requiredGates: string[];
   /** Per-type quorum overrides (falls back to quorumPercent/approvalThreshold if not set) */
   typeQuorum: TypeQuorumMap;
+  /** Minimum quorum floor — governance-change can never go below this (default 60%) */
+  quorumFloor: number;
 }
 
 // ── State ────────────────────────────────────────────────────
@@ -560,6 +656,7 @@ export const DEFAULT_CONFIG: DAOConfig = {
   riskThreshold: 7,
   requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance"],
   typeQuorum: TYPE_QUORUM,
+  quorumFloor: 60,
 };
 
 /** Create an empty initial state */

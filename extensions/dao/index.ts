@@ -6,7 +6,7 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
 
 // Types
-import type { ProposalType, AgentRiskLevel, DAOArtefacts, ProposalContent, CompositeScore } from "./types.js";
+import type { ProposalType, AgentRiskLevel, DAOArtefacts, ProposalContent, CompositeScore, AmendmentPayload, AmendmentOrigin, AmendmentState } from "./types.js";
 import { PROPOSAL_TYPES, PROPOSAL_TYPE_LABELS } from "./types.js";
 
 // Layer 1: Governance
@@ -18,10 +18,11 @@ import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./governance
 import { assertTransition, statusLabel } from "./governance/lifecycle.js";
 import { calculateCompositeScore, parseScoresFromOutput, applyMalus, formatCompositeScore } from "./governance/scoring.js";
 import { classifyRiskZone, formatZoneClassification } from "./governance/zones.js";
+import { validateAmendmentPayload, previewAmendment, executeAmendment, rollbackAmendment } from "./governance/amendments.js";
 import { validateCouncilApproval, formatCouncilInfo } from "./governance/councils.js";
 
 // Layer 2: Intelligence
-import { initializeAgents, addAgent, removeAgent, getAgent, listAgents, formatAgentsTable, formatAgentCard, formatRegistryTable } from "./intelligence/agents.js";
+import { initializeAgents, addAgent, removeAgent, updateAgent, getAgent, listAgents, formatAgentsTable, formatAgentCard, formatRegistryTable } from "./intelligence/agents.js";
 import { dispatchSwarm } from "./intelligence/swarm.js";
 import { synthesize } from "./intelligence/synthesis.js";
 
@@ -47,7 +48,7 @@ import { recordAudit, getProposalAudit, formatAuditTrail } from "./control/audit
 import { generateChecklist, formatChecklist, checklistStats } from "./control/checklist.js";
 
 // Rendering
-import { renderDashboard, renderDeliberationProgress, renderHistory, renderAgentOutputSummary } from "./render.js";
+import { renderDashboard, renderDeliberationProgress, renderHistory, renderAgentOutputSummary, renderAmendmentDiff, renderAmendmentStatus } from "./render.js";
 
 export default function daoExtension(pi: ExtensionAPI) {
   // ================================================================
@@ -113,6 +114,12 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- \`dao_execute\` → execute controlled/approved proposals`;
     daoContext += `\n- \`dao_artefacts\` → view auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet)`;
     daoContext += `\n- \`dao_audit\` → view full audit trail`;
+    daoContext += `\n\n**Self-Amending Tools:**`;
+    daoContext += `\n- \`dao_propose_amendment\` → propose changes to DAO agents, config, quorum, gates, or councils`;
+    daoContext += `\n- \`dao_update_agent\` → shortcut to propose agent property changes (creates governance-change proposal)`;
+    daoContext += `\n- \`dao_update_config\` → shortcut to propose config changes (creates governance-change proposal)`;
+    daoContext += `\n- \`dao_preview_amendment\` → preview amendment diff before execution`;
+    daoContext += `\n- \`dao_approve_amendment\` → human confirmation to execute an approved amendment`;
     daoContext += `\n\nAvailable proposal types: product-feature (✨), security-change (🔒), technical-change (⚙️), release-change (📦), governance-change (📜).`;
     daoContext += `\nEach type has per-type quorum thresholds and maps to a council (product-council, security-council, delivery-council, governance-council).`;
     daoContext += `\nRisk zones: 🟢 Green (auto-approve), 🟠 Orange (council review), 🔴 Red (formal vote + security).`;
@@ -159,748 +166,452 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // TOOL: dao_add_agent
+  // TOOL: dao_propose_amendment
   // ================================================================
 
   pi.registerTool({
-    name: "dao_add_agent",
-    label: "DAO Add Agent",
+    name: "dao_propose_amendment",
+    label: "DAO Propose Amendment",
     description:
-      "Add a new agent to the DAO with a name, role, description, and vote weight (1-10).",
+      "Propose an amendment to the DAO itself (agents, config, quorum, gates, councils). Creates a governance-change proposal with the amendment payload attached. The amendment must pass deliberation + control gates before execution.",
     parameters: Type.Object({
-      id: Type.String({ description: "Unique agent ID (lowercase, no spaces)" }),
-      name: Type.String({ description: "Display name of the agent" }),
-      role: Type.String({ description: "Brief role description" }),
-      description: Type.String({ description: "What this agent analyzes and outputs" }),
-      weight: Type.Number({ description: "Vote weight from 1 (low) to 10 (high)", minimum: 1, maximum: 10 }),
-      model: Type.Optional(Type.String({ description: "LLM model override" })),
-      owner: Type.Optional(Type.String({ description: "Who is responsible for this agent" })),
-      mission: Type.Optional(Type.String({ description: "Clear objective for this agent" })),
-      riskLevel: Type.Optional(StringEnum(["low", "medium", "high", "critical"], { description: "Risk classification" })),
+      title: Type.String({ description: "Short title for the amendment" }),
+      description: Type.String({ description: "Why this amendment is needed" }),
+      amendmentType: StringEnum(
+        ["agent-update", "agent-add", "agent-remove", "config-update", "quorum-update", "gate-update", "council-update"],
+        { description: "Type of amendment" }
+      ),
+      // agent-update fields
+      agentId: Type.Optional(Type.String({ description: "Agent ID (for agent-update, agent-remove, council-update)" })),
+      agentChanges: Type.Optional(Type.String({ description: "JSON object of agent fields to change (for agent-update). E.g. '{\"weight\": 4, \"role\": \"new role\"}'" })),
+      // agent-add fields
+      newAgentId: Type.Optional(Type.String({ description: "New agent ID (for agent-add)" })),
+      newAgentName: Type.Optional(Type.String({ description: "New agent name (for agent-add)" })),
+      newAgentRole: Type.Optional(Type.String({ description: "New agent role (for agent-add)" })),
+      newAgentDescription: Type.Optional(Type.String({ description: "New agent description (for agent-add)" })),
+      newAgentWeight: Type.Optional(Type.Number({ description: "New agent weight 1-10 (for agent-add)", minimum: 1, maximum: 10 })),
+      // config-update fields
+      configChanges: Type.Optional(Type.String({ description: "JSON object of config fields to change (for config-update). E.g. '{\"quorumPercent\": 65}'" })),
+      // quorum-update fields
+      quorumChanges: Type.Optional(Type.String({ description: "JSON object of per-type quorum changes (for quorum-update). E.g. '{\"governance-change\": {\"quorumPercent\": 75}}'" })),
+      // gate-update fields
+      addGates: Type.Optional(Type.Array(Type.String(), { description: "Gate IDs to add (for gate-update)" })),
+      removeGates: Type.Optional(Type.Array(Type.String(), { description: "Gate IDs to remove (for gate-update)" })),
+      // council-update fields
+      councils: Type.Optional(Type.String({ description: "JSON array of council memberships (for council-update). E.g. '[{\"council\": \"governance-council\", \"role\": \"lead\"}]'" })),
+      // Origin
+      originSource: Type.Optional(StringEnum(["human", "agent"], { description: "Who initiated this amendment (default: human)" })),
+      originAgentId: Type.Optional(Type.String({ description: "Agent ID that initiated (if originSource is agent)" })),
     }),
+    promptSnippet: "dao_propose_amendment — Propose a self-amendment to the DAO (agents, config, quorum, gates, councils)",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      // Build the amendment payload from params
+      let payload: AmendmentPayload;
       try {
-        const agent = addAgent({
-          ...params,
-          riskLevel: params.riskLevel as AgentRiskLevel | undefined,
-        });
-        return toolResult(
-          `Agent added: **${agent.name}** (${agent.role}) with weight ${agent.weight}\n\n${formatAgentsTable(listAgents())}`
-        );
+        switch (params.amendmentType) {
+          case "agent-update": {
+            if (!params.agentId) return toolResult("Error: agentId is required for agent-update");
+            if (!params.agentChanges) return toolResult("Error: agentChanges JSON is required for agent-update");
+            const changes = JSON.parse(params.agentChanges);
+            payload = { type: "agent-update", agentId: params.agentId, changes };
+            break;
+          }
+          case "agent-add": {
+            if (!params.newAgentId || !params.newAgentName || !params.newAgentRole || !params.newAgentDescription || !params.newAgentWeight) {
+              return toolResult("Error: newAgentId, newAgentName, newAgentRole, newAgentDescription, newAgentWeight are all required for agent-add");
+            }
+            payload = {
+              type: "agent-add",
+              agent: {
+                id: params.newAgentId,
+                name: params.newAgentName,
+                role: params.newAgentRole,
+                description: params.newAgentDescription,
+                weight: params.newAgentWeight,
+              },
+            };
+            break;
+          }
+          case "agent-remove": {
+            if (!params.agentId) return toolResult("Error: agentId is required for agent-remove");
+            payload = { type: "agent-remove", agentId: params.agentId };
+            break;
+          }
+          case "config-update": {
+            if (!params.configChanges) return toolResult("Error: configChanges JSON is required for config-update");
+            const changes = JSON.parse(params.configChanges);
+            payload = { type: "config-update", changes };
+            break;
+          }
+          case "quorum-update": {
+            if (!params.quorumChanges) return toolResult("Error: quorumChanges JSON is required for quorum-update");
+            const typeQuorum = JSON.parse(params.quorumChanges);
+            payload = { type: "quorum-update", typeQuorum };
+            break;
+          }
+          case "gate-update": {
+            if (!params.addGates?.length && !params.removeGates?.length) {
+              return toolResult("Error: at least one of addGates or removeGates is required for gate-update");
+            }
+            payload = { type: "gate-update", addGates: params.addGates, removeGates: params.removeGates };
+            break;
+          }
+          case "council-update": {
+            if (!params.agentId) return toolResult("Error: agentId is required for council-update");
+            if (!params.councils) return toolResult("Error: councils JSON is required for council-update");
+            const councils = JSON.parse(params.councils);
+            payload = { type: "council-update", agentId: params.agentId, councils };
+            break;
+          }
+          default:
+            return toolResult(`Error: unknown amendment type: ${params.amendmentType}`);
+        }
       } catch (err: any) {
-        return toolResult(`Error: ${err.message}`);
+        return toolResult(`Error parsing amendment parameters: ${err.message}`);
       }
+
+      // Validate the payload
+      const validation = validateAmendmentPayload(payload);
+      if (!validation.valid) {
+        return toolResult(`❌ Amendment validation failed:\n${validation.errors.map(e => `- ${e}`).join("\n")}`);
+      }
+
+      // Build origin
+      const origin: AmendmentOrigin = {
+        source: (params.originSource as "human" | "agent") ?? "human",
+        agentId: params.originAgentId,
+      };
+
+      // Create a governance-change proposal with the amendment attached
+      const proposal = createProposal(
+        params.title,
+        "governance-change" as ProposalType,
+        params.description,
+        origin.source === "agent" ? `agent:${origin.agentId}` : "user",
+        undefined,
+      );
+
+      // Attach amendment data
+      proposal.amendmentPayload = payload;
+      proposal.amendmentOrigin = origin;
+      proposal.amendmentState = origin.source === "agent" ? "pending-vote" : "pending-vote";
+
+      // Classify risk zone (amendment-aware)
+      const zone = classifyRiskZone(proposal);
+      proposal.riskZone = zone;
+
+      // Audit
+      recordAudit(
+        proposal.id,
+        "governance",
+        "amendment_proposed",
+        origin.source === "agent" ? `agent:${origin.agentId}` : "user",
+        `Amendment proposed: ${payload.type} — ${params.title}`,
+      );
+
+      // Preview diff
+      const diffs = previewAmendment(payload);
+      const diffTable = renderAmendmentDiff(diffs);
+
+      const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
+      const agentWarning = origin.source === "agent"
+        ? "\n\n> ⚠️ **Agent-initiated amendment** — requires DAO vote + human confirmation via `dao_approve_amendment`."
+        : "";
+
+      return toolResult(
+        `# 📜 Amendment Proposed — #${proposal.id}\n\n` +
+        `**Title:** ${params.title}\n` +
+        `**Type:** ${payload.type}\n` +
+        `**Risk Zone:** ${zoneLabel}\n` +
+        `**Origin:** ${origin.source}${origin.agentId ? ` (${origin.agentId})` : ""}\n\n` +
+        diffTable +
+        agentWarning +
+        `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
+      );
     },
   });
 
   // ================================================================
-  // TOOL: dao_remove_agent
+  // TOOL: dao_preview_amendment
   // ================================================================
 
   pi.registerTool({
-    name: "dao_remove_agent",
-    label: "DAO Remove Agent",
-    description: "Remove an agent from the DAO by their ID.",
+    name: "dao_preview_amendment",
+    label: "DAO Preview Amendment",
+    description:
+      "Preview the changes an amendment proposal would make without applying them. Shows a before/after diff.",
     parameters: Type.Object({
-      agentId: Type.String({ description: "ID of the agent to remove" }),
+      proposalId: Type.Number({ description: "ID of the amendment proposal to preview" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      try {
-        const removed = removeAgent(params.agentId);
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+      if (!proposal.amendmentPayload) {
+        return toolResult(`Proposal #${params.proposalId} is not an amendment proposal.`);
+      }
+
+      const diffs = previewAmendment(proposal.amendmentPayload);
+      const diffTable = renderAmendmentDiff(diffs);
+      const status = renderAmendmentStatus(proposal);
+
+      return toolResult(`${status}\n\n${diffTable}`);
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_approve_amendment
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_approve_amendment",
+    label: "DAO Approve Amendment",
+    description:
+      "Human confirmation to execute an approved amendment. Required for agent-initiated amendments. Executes the amendment with automatic rollback on failure.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the amendment proposal to approve and execute" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+      if (!proposal.amendmentPayload) {
+        return toolResult(`Proposal #${params.proposalId} is not an amendment proposal.`);
+      }
+
+      // Must be approved or controlled
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
         return toolResult(
-          `Agent removed: **${removed.name}** (${removed.role})\n\n${formatAgentsTable(listAgents())}`
+          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). The amendment must pass deliberation and control gates first.`
         );
-      } catch (err: any) {
-        return toolResult(`Error: ${err.message}`);
+      }
+
+      // For agent-initiated: check that the amendment was in approved-pending-human state
+      if (
+        proposal.amendmentOrigin?.source === "agent" &&
+        proposal.amendmentState !== "approved-pending-human" &&
+        proposal.amendmentState !== "pending-vote" // also allow if DAO already approved
+      ) {
+        return toolResult(
+          `Amendment state is "${proposal.amendmentState}" — expected "approved-pending-human" for agent-initiated amendments.`
+        );
+      }
+
+      // Execute the amendment
+      const result = executeAmendment(proposal.amendmentPayload);
+
+      if (result.success) {
+        proposal.amendmentState = "executed";
+        proposal.preAmendmentSnapshot = result.snapshot;
+        updateProposalStatus(proposal.id, "executed");
+
+        recordAudit(
+          proposal.id,
+          "governance",
+          "amendment_executed",
+          "user",
+          `Amendment executed successfully: ${proposal.amendmentPayload.type}`,
+        );
+
+        const diffs = previewAmendment(proposal.amendmentPayload);
+
+        return toolResult(
+          `# ✅ Amendment Executed — #${proposal.id}\n\n` +
+          `**Type:** ${proposal.amendmentPayload.type}\n` +
+          `**State:** 🚀 executed\n` +
+          `**Snapshot:** Captured at ${result.snapshot.capturedAt} (rollback available)\n\n` +
+          renderAmendmentDiff(diffs) +
+          `\n\n> 💾 Pre-amendment snapshot saved. Use \`dao_rollback_amendment\` if needed.`
+        );
+      } else {
+        proposal.amendmentState = "rolled-back";
+
+        recordAudit(
+          proposal.id,
+          "governance",
+          "amendment_failed",
+          "system",
+          `Amendment auto-rolled back: ${result.error}`,
+        );
+
+        return toolResult(
+          `# ⏪ Amendment Failed & Rolled Back — #${proposal.id}\n\n` +
+          `**Error:** ${result.error}\n\n` +
+          `The DAO state has been automatically restored to the pre-amendment snapshot.`
+        );
       }
     },
   });
 
   // ================================================================
-  // TOOL: dao_list_agents
+  // TOOL: dao_update_agent
   // ================================================================
 
   pi.registerTool({
-    name: "dao_list_agents",
-    label: "DAO List Agents",
-    description: "List all agents in the DAO with their roles and vote weights.",
+    name: "dao_update_agent",
+    label: "DAO Update Agent",
+    description:
+      "Update an existing agent's properties. Automatically creates a governance-change proposal with the amendment. Use dao_deliberate to process it.",
     parameters: Type.Object({
-      detailed: Type.Optional(Type.Boolean({ description: "Show full registry view instead of simple table" })),
+      agentId: Type.String({ description: "ID of the agent to update" }),
+      weight: Type.Optional(Type.Number({ description: "New vote weight (1-10)", minimum: 1, maximum: 10 })),
+      role: Type.Optional(Type.String({ description: "New role description" })),
+      name: Type.Optional(Type.String({ description: "New display name" })),
+      description: Type.Optional(Type.String({ description: "New description" })),
+      model: Type.Optional(Type.String({ description: "New LLM model" })),
+      riskLevel: Type.Optional(StringEnum(["low", "medium", "high", "critical"], { description: "New risk level" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const agents = listAgents();
-      if (agents.length === 0) {
-        return toolResult("No agents configured. Run `dao_setup` first.");
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
       }
-      const output = params.detailed
-        ? formatRegistryTable(agents)
-        : `# DAO Agents\n\n${formatAgentsTable(agents)}`;
-      return toolResult(output);
-    },
-  });
 
-  // ================================================================
-  // TOOL: dao_agent_card
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_agent_card",
-    label: "DAO Agent Card",
-    description: "Show the full registry card for a specific agent, including all 11 registry fields.",
-    parameters: Type.Object({
-      agentId: Type.String({ description: "ID of the agent to inspect" }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const agent = getAgent(params.agentId);
       if (!agent) {
         return toolResult(`Agent "${params.agentId}" not found.`);
       }
-      return toolResult(formatAgentCard(agent));
-    },
-  });
 
-  // ================================================================
-  // TOOL: dao_propose
-  // ================================================================
+      // Build changes object from non-undefined params
+      const changes: Record<string, any> = {};
+      if (params.weight !== undefined) changes.weight = params.weight;
+      if (params.role !== undefined) changes.role = params.role;
+      if (params.name !== undefined) changes.name = params.name;
+      if (params.description !== undefined) changes.description = params.description;
+      if (params.model !== undefined) changes.model = params.model;
+      if (params.riskLevel !== undefined) changes.riskLevel = params.riskLevel;
 
-  pi.registerTool({
-    name: "dao_propose",
-    label: "DAO Propose",
-    description:
-      "Create a new typed proposal for the DAO to deliberate on. Every proposal must have a type. Provide structured fields for a well-defined proposal object.",
-    parameters: Type.Object({
-      title: Type.String({ description: "Short title for the proposal" }),
-      type: StringEnum(["product-feature", "security-change", "technical-change", "release-change", "governance-change"], {
-        description: "Type: product-feature, security-change, technical-change, release-change, governance-change",
-      }),
-      description: Type.String({ description: "Detailed description / problem statement" }),
-      context: Type.Optional(Type.String({ description: "Additional context (market data, constraints, etc.)" })),
-      // Structured V2 fields
-      problemStatement: Type.Optional(Type.String({ description: "What problem does this solve?" })),
-      targetUser: Type.Optional(Type.String({ description: "Who is the target user?" })),
-      expectedOutcome: Type.Optional(Type.String({ description: "What outcome is expected?" })),
-      successMetrics: Type.Optional(Type.Array(Type.String(), { description: "How will success be measured?" })),
-      scopeIn: Type.Optional(Type.Array(Type.String(), { description: "What is in scope?" })),
-      scopeOut: Type.Optional(Type.Array(Type.String(), { description: "What is out of scope?" })),
-      permissionsImpact: Type.Optional(Type.Array(Type.String(), { description: "What permissions/access changes?" })),
-      dataImpact: Type.Optional(Type.Array(Type.String(), { description: "What data/storage changes?" })),
-      risks: Type.Optional(Type.Array(Type.String(), { description: "What risks are identified?" })),
-      dependencies: Type.Optional(Type.Array(Type.String(), { description: "What dependencies exist?" })),
-      estimatedEffort: Type.Optional(Type.String({ description: "Estimated effort (e.g. '2 weeks')" })),
-      confidenceScore: Type.Optional(Type.Number({ description: "Confidence level 1-10", minimum: 1, maximum: 10 })),
-    }),
-    promptSnippet: "dao_propose — Submit a new typed proposal for DAO deliberation",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const state = getState();
-      if (!state.initialized) {
-        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      if (Object.keys(changes).length === 0) {
+        return toolResult("No changes specified. Provide at least one field to update.");
       }
 
-      // Build structured content from optional fields
-      const content: Partial<ProposalContent> = {};
-      if (params.problemStatement) content.problemStatement = params.problemStatement;
-      if (params.targetUser) content.targetUser = params.targetUser;
-      if (params.expectedOutcome) content.expectedOutcome = params.expectedOutcome;
-      if (params.successMetrics) content.successMetrics = params.successMetrics;
-      if (params.scopeIn) content.scopeIn = params.scopeIn;
-      if (params.scopeOut) content.scopeOut = params.scopeOut;
-      if (params.permissionsImpact) content.permissionsImpact = params.permissionsImpact;
-      if (params.dataImpact) content.dataImpact = params.dataImpact;
-      if (params.risks) content.risks = params.risks;
-      if (params.dependencies) content.dependencies = params.dependencies;
-      if (params.estimatedEffort) content.estimatedEffort = params.estimatedEffort;
-      if (params.confidenceScore) content.confidenceScore = params.confidenceScore;
+      const payload: AmendmentPayload = {
+        type: "agent-update",
+        agentId: params.agentId,
+        changes,
+      };
 
-      const hasStructuredContent = Object.keys(content).length > 0;
+      // Validate
+      const validation = validateAmendmentPayload(payload);
+      if (!validation.valid) {
+        return toolResult(`❌ Validation failed:\n${validation.errors.map(e => `- ${e}`).join("\n")}`);
+      }
 
+      // Create governance-change proposal
+      const changeDesc = Object.entries(changes).map(([k, v]) => `${k}: ${v}`).join(", ");
       const proposal = createProposal(
-        params.title,
-        params.type as ProposalType,
-        params.description,
+        `Update agent ${agent.name}: ${changeDesc}`,
+        "governance-change" as ProposalType,
+        `Proposed changes to agent "${agent.name}" (${params.agentId}): ${changeDesc}`,
         "user",
-        params.context,
-        hasStructuredContent ? content : undefined
       );
 
-      // Classify risk zone
-      const zone = classifyRiskZone(proposal);
-      proposal.riskZone = zone;
+      proposal.amendmentPayload = payload;
+      proposal.amendmentOrigin = { source: "human" };
+      proposal.amendmentState = "pending-vote";
+      proposal.riskZone = classifyRiskZone(proposal);
 
-      // Audit: proposal created
       recordAudit(
         proposal.id,
         "governance",
-        "proposal_created",
+        "amendment_proposed",
         "user",
-        `Proposal "${params.title}" created by user — zone: ${zone}`
+        `Agent update amendment: ${params.agentId} — ${changeDesc}`,
       );
 
-      const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
+      const diffs = previewAmendment(payload);
 
       return toolResult(
-        `# Proposal #${proposal.id} Created\n\n${formatProposal(proposal)}\n\n**Risk Zone:** ${zoneLabel}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start the swarm deliberation.`
+        `# 📜 Agent Update Amendment — #${proposal.id}\n\n` +
+        `**Agent:** ${agent.name} (\`${params.agentId}\`)\n` +
+        `**Risk Zone:** ${proposal.riskZone === "red" ? "🔴 Red" : proposal.riskZone === "orange" ? "🟠 Orange" : "🟢 Green"}\n\n` +
+        renderAmendmentDiff(diffs) +
+        `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
       );
     },
   });
 
   // ================================================================
-  // TOOL: dao_deliberate — THE CORE TOOL
+  // TOOL: dao_update_config
   // ================================================================
 
   pi.registerTool({
-    name: "dao_deliberate",
-    label: "DAO Deliberate",
+    name: "dao_update_config",
+    label: "DAO Update Config",
     description:
-      "Run the full DAO deliberation cycle: dispatch all agents in parallel, collect analyses, synthesize results, and tally weighted votes. Returns the verdict (approved/rejected) with full synthesis.",
+      "Update DAO configuration settings. Automatically creates a governance-change proposal with the amendment. Use dao_deliberate to process it.",
     parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the proposal to deliberate on" }),
+      quorumPercent: Type.Optional(Type.Number({ description: "New quorum percentage", minimum: 1, maximum: 100 })),
+      approvalThreshold: Type.Optional(Type.Number({ description: "New approval threshold percentage", minimum: 1, maximum: 100 })),
+      riskThreshold: Type.Optional(Type.Number({ description: "New risk threshold (1-10)", minimum: 1, maximum: 10 })),
+      maxConcurrent: Type.Optional(Type.Number({ description: "Max concurrent agents", minimum: 1, maximum: 8 })),
+      defaultModel: Type.Optional(Type.String({ description: "New default LLM model" })),
     }),
-    promptSnippet: "dao_deliberate — Run parallel swarm deliberation + weighted vote on a proposal",
-    promptGuidelines: [
-      "Use dao_deliberate after creating a proposal with dao_propose to get the full DAO verdict",
-      "The deliberation runs all agents in parallel — it may take 30-60 seconds",
-    ],
-    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = getState();
       if (!state.initialized) {
         return toolResult("DAO not initialized. Run `dao_setup` first.");
       }
 
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
+      const changes: Record<string, any> = {};
+      if (params.quorumPercent !== undefined) changes.quorumPercent = params.quorumPercent;
+      if (params.approvalThreshold !== undefined) changes.approvalThreshold = params.approvalThreshold;
+      if (params.riskThreshold !== undefined) changes.riskThreshold = params.riskThreshold;
+      if (params.maxConcurrent !== undefined) changes.maxConcurrent = params.maxConcurrent;
+      if (params.defaultModel !== undefined) changes.defaultModel = params.defaultModel;
+
+      if (Object.keys(changes).length === 0) {
+        return toolResult("No changes specified. Provide at least one config field to update.");
       }
 
-      if (proposal.status !== "open") {
-        return toolResult(
-          `Proposal #${proposal.id} is not open for deliberation (status: ${proposal.status}).`
-        );
+      const payload: AmendmentPayload = {
+        type: "config-update",
+        changes,
+      };
+
+      // Validate
+      const validation = validateAmendmentPayload(payload);
+      if (!validation.valid) {
+        return toolResult(`❌ Validation failed:\n${validation.errors.map(e => `- ${e}`).join("\n")}`);
       }
 
-      const agents = listAgents();
-      if (agents.length === 0) {
-        return toolResult("No agents in the DAO. Add agents first.");
-      }
+      // Create governance-change proposal
+      const changeDesc = Object.entries(changes).map(([k, v]) => `${k}: ${v}`).join(", ");
+      const proposal = createProposal(
+        `Update DAO config: ${changeDesc}`,
+        "governance-change" as ProposalType,
+        `Proposed configuration changes: ${changeDesc}`,
+        "user",
+      );
 
-      // Update status to deliberating
-      updateProposalStatus(proposal.id, "deliberating");
+      proposal.amendmentPayload = payload;
+      proposal.amendmentOrigin = { source: "human" };
+      proposal.amendmentState = "pending-vote";
+      proposal.riskZone = classifyRiskZone(proposal);
 
-      // Audit: deliberation started
       recordAudit(
         proposal.id,
         "governance",
-        "deliberation_started",
-        "system",
-        `Swarm deliberation started with ${agents.length} agents`
+        "amendment_proposed",
+        "user",
+        `Config update amendment: ${changeDesc}`,
       );
 
-      const startTime = Date.now();
+      const diffs = previewAmendment(payload);
 
-      // Stream progress updates
-      onUpdate?.({
-        content: [{ type: "text", text: renderDeliberationProgress(0, agents.length, "Starting...") }],
-        details: undefined,
-      });
-
-      // Dispatch swarm — all agents in parallel
-      const agentOutputs = await dispatchSwarm(
-        proposal,
-        agents,
-        signal,
-        (completed, total, agentName) => {
-          onUpdate?.({
-            content: [
-              {
-                type: "text",
-                text: renderDeliberationProgress(completed, total, agentName),
-              },
-            ],
-            details: undefined,
-          });
-        }
+      return toolResult(
+        `# 📜 Config Update Amendment — #${proposal.id}\n\n` +
+        `**Risk Zone:** ${proposal.riskZone === "red" ? "🔴 Red" : proposal.riskZone === "orange" ? "🟠 Orange" : "🟢 Green"}\n\n` +
+        renderAmendmentDiff(diffs) +
+        `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
       );
-
-      // Parse votes from each agent's output
-      const votes = agentOutputs.map((output) => {
-        const agent = getAgent(output.agentId);
-        if (output.error || !output.content) {
-          return {
-            agentId: output.agentId,
-            agentName: output.agentName,
-            position: "abstain" as const,
-            reasoning: output.error ?? "No output",
-            weight: agent?.weight ?? 1,
-          };
-        }
-        return parseVoteFromOutput(
-          output.agentId,
-          output.agentName,
-          agent?.weight ?? 1,
-          output.content
-        );
-      });
-
-      // Attach parsed votes to outputs
-      for (let i = 0; i < agentOutputs.length; i++) {
-        agentOutputs[i].vote = votes[i];
-      }
-
-      // Audit: swarm completed
-      const durationMs = Date.now() - startTime;
-      recordAudit(
-        proposal.id,
-        "intelligence",
-        "swarm_completed",
-        "system",
-        `${agentOutputs.length} agents completed in ${(durationMs / 1000).toFixed(1)}s`
-      );
-
-      // Synthesize all outputs
-      const synthDoc = synthesize(agentOutputs, votes);
-
-      // Tally votes (with per-type quorum)
-      const tally = tallyVotes(proposal.id, votes, proposal.type);
-
-      // Store deliberation results BEFORE scoring so agent outputs are available
-      const finalStatus = tally.approved ? "approved" : "rejected";
-      storeDeliberationResults(proposal.id, agentOutputs, synthDoc, votes);
-
-      // === COMPOSITE SCORING ===
-      const proposal_ = getProposal(params.proposalId)!; // re-fetch with outputs
-      const axes = parseScoresFromOutput(proposal_);
-      let compositeScore = calculateCompositeScore(axes);
-
-      // Apply malus for permissions/data impact
-      const content = proposal_.content;
-      if (content) {
-        compositeScore = applyMalus(compositeScore, content.permissionsImpact, content.dataImpact);
-      }
-      storeCompositeScore(proposal_.id, compositeScore);
-
-      // Classify risk zone
-      const zone = classifyRiskZone(proposal_);
-      proposal_.riskZone = zone;
-
-      updateProposalStatus(proposal.id, finalStatus);
-
-      // Audit: votes tallied
-      recordAudit(
-        proposal.id,
-        "governance",
-        "votes_tallied",
-        "system",
-        `Result: ${finalStatus} with ${(tally.approvalScore * 100).toFixed(1)}% weighted approval`
-      );
-
-      // Build the full result
-      const tallyFormatted = formatTallyResult(tally);
-      const agentSummary = renderAgentOutputSummary(agentOutputs);
-
-      let nextStepHint = "";
-      if (tally.approved) {
-        const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
-        nextStepHint = `\n\n> **Next step:** Run \`dao_check\` to validate with control gates before execution.`;
-        nextStepHint += `\n> **Risk Zone:** ${zoneLabel} | **Score:** ${compositeScore.weighted}/100`;
-      }
-
-      const resultText = [
-        `# Deliberation Complete — Proposal #${proposal.id}`,
-        "",
-        `**Verdict: ${tally.approved ? "✅ APPROVED" : "❌ REJECTED"}** (${(tally.approvalScore * 100).toFixed(1)}% weighted approval)`,
-        `**Duration:** ${(durationMs / 1000).toFixed(1)}s`,
-        "",
-        tallyFormatted,
-        "",
-        formatCompositeScore(compositeScore),
-        "",
-        agentSummary,
-        "",
-        "---",
-        "",
-        synthDoc,
-        nextStepHint,
-      ].join("\n");
-
-      return toolResult(resultText, { deliberation: { proposalId: proposal.id, tally, durationMs } });
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_tally
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_tally",
-    label: "DAO Tally",
-    description: "Show the detailed vote results for a proposal that has been deliberated on.",
-    parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the proposal" }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      if (proposal.votes.length === 0) {
-        return toolResult(`Proposal #${proposal.id} has not been deliberated on yet.`);
-      }
-
-      const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
-      return toolResult(formatTallyResult(tally, proposal.type));
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_check — Control Gates
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_check",
-    label: "DAO Control Check",
-    description:
-      "Run quality control gates and generate checklist for an approved proposal before execution. Validates quorum, risk, consensus, specs, and delivery feasibility.",
-    parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the approved proposal to check" }),
-    }),
-    promptSnippet: "dao_check — Run control gates before execution",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      if (proposal.status !== "approved") {
-        return toolResult(
-          `Proposal #${proposal.id} is not approved (status: ${statusLabel(proposal.status)}). Only approved proposals can be checked.`
-        );
-      }
-
-      // Run all gates
-      const result = runGates(proposal);
-
-      // Generate checklist
-      const checklist = generateChecklist(proposal);
-      result.checklist = checklist;
-
-      // Audit: gates checked
-      recordAudit(
-        proposal.id,
-        "control",
-        "gates_checked",
-        "system",
-        `${result.gates.length} gates evaluated: ${result.blockerCount} blockers, ${result.warningCount} warnings`
-      );
-
-      // Auto-transition to "controlled" if all gates passed
-      if (result.allGatesPassed) {
-        assertTransition("approved", "controlled");
-        updateProposalStatus(proposal.id, "controlled");
-        recordAudit(
-          proposal.id,
-          "control",
-          "status_controlled",
-          "system",
-          "All gates passed — proposal promoted to controlled"
-        );
-
-        // === AUTO-GENERATE ALL 7 ARTEFACTS ===
-        const tally = tallyVotes(proposal.id, proposal.votes);
-        const existingPlan = getPlan(proposal.id);
-        const artefacts = generateAllArtefacts(proposal, tally, result, existingPlan);
-
-        // Store artefacts in state
-        const state = getState();
-        state.artefacts[proposal.id] = artefacts;
-        setState(state);
-
-        recordAudit(
-          proposal.id,
-          "control",
-          "artefacts_generated",
-          "system",
-          `7 artefacts auto-generated: Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet`
-        );
-      }
-
-      // Format output
-      const stats = checklistStats(checklist);
-
-      const gateTable = [
-        "| Gate | Status | Severity | Message |",
-        "|------|--------|----------|---------|",
-      ];
-      for (const gate of result.gates) {
-        const icon = gate.passed ? "✅" : gate.severity === "blocker" ? "🚫" : gate.severity === "warning" ? "⚠️" : "ℹ️";
-        gateTable.push(`| ${gate.name} | ${icon} ${gate.passed ? "Pass" : "Fail"} | ${gate.severity} | ${gate.message} |`);
-      }
-
-      const lines = [
-        `# Control Check — Proposal #${proposal.id}`,
-        "",
-        `**Result:** ${result.allGatesPassed ? "✅ ALL GATES PASSED" : "🚫 GATES BLOCKED"}`,
-        `**Gates:** ${result.gates.filter((g) => g.passed).length}/${result.gates.length} passed | ${result.blockerCount} blockers | ${result.warningCount} warnings`,
-        "",
-        "## Gate Results",
-        "",
-        ...gateTable,
-        "",
-        formatChecklist(checklist),
-        "",
-        `**Checklist:** ${stats.checked}/${stats.total} (${stats.percent}%)`,
-      ];
-
-      if (result.allGatesPassed) {
-        lines.push("");
-        lines.push("> **Ready for execution.** Run `dao_plan` to generate a delivery plan, or `dao_execute` to proceed directly.");
-
-        // Show artefacts summary if generated
-        const storedArtefacts = getState().artefacts[proposal.id];
-        if (storedArtefacts) {
-          lines.push("");
-          lines.push(formatArtefactsSummary(storedArtefacts));
-        }
-      } else {
-        lines.push("");
-        lines.push("> **Blocked.** Review the failing gates above. You may resolve issues and re-run `dao_check`, or proceed at your own risk.");
-      }
-
-      return toolResult(lines.join("\n"), { controlCheck: result });
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_audit — Audit Trail
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_audit",
-    label: "DAO Audit Trail",
-    description: "Show the full audit trail for a proposal or all proposals.",
-    parameters: Type.Object({
-      proposalId: Type.Optional(Type.Number({ description: "Specific proposal ID (omit for full audit)" })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      let entries;
-
-      if (params.proposalId !== undefined) {
-        const proposal = getProposal(params.proposalId);
-        if (!proposal) {
-          return toolResult(`Proposal #${params.proposalId} not found.`);
-        }
-        entries = getProposalAudit(params.proposalId);
-      } else {
-        entries = getState().auditLog;
-      }
-
-      if (entries.length === 0) {
-        return params.proposalId !== undefined
-          ? toolResult(`No audit entries found for proposal #${params.proposalId}.`)
-          : toolResult("No audit entries recorded yet.");
-      }
-
-      return toolResult(formatAuditTrail(entries));
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_plan — Delivery Plan
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_plan",
-    label: "DAO Delivery Plan",
-    description: "Generate or show the structured delivery plan for an approved/controlled proposal.",
-    parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the proposal" }),
-    }),
-    promptSnippet: "dao_plan — Show structured delivery plan with phases, tasks, and timeline",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      if (proposal.status !== "approved" && proposal.status !== "controlled") {
-        return toolResult(
-          `Proposal #${proposal.id} is not approved/controlled (status: ${statusLabel(proposal.status)}). Only approved or controlled proposals can have delivery plans.`
-        );
-      }
-
-      // Check for existing plan
-      let plan = getPlan(params.proposalId);
-
-      if (!plan) {
-        // Parse plan from delivery agent output, or from execution result / synthesis
-        const deliveryOutput = proposal.agentOutputs.find((o) => o.agentId === "delivery")?.content
-          ?? proposal.executionResult
-          ?? proposal.synthesis
-          ?? proposal.description;
-
-        plan = parseDeliveryPlan(params.proposalId, deliveryOutput);
-        storePlan(plan);
-
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "plan_generated",
-          "system",
-          `Delivery plan created with ${plan.phases.length} phases, ${plan.phases.reduce((n, p) => n + p.tasks.length, 0)} tasks`
-        );
-      }
-
-      return toolResult(formatPlan(plan));
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_artefacts — View generated artefacts
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_artefacts",
-    label: "DAO Artefacts",
-    description:
-      "View the 7 auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet) for an approved proposal. Artefacts are generated automatically when dao_check passes.",
-    parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the proposal" }),
-      artefact: Type.Optional(
-        StringEnum(
-          ["all", "decision-brief", "adr", "risk-report", "prd-lite", "implementation-plan", "test-plan", "release-packet"],
-          { description: "Specific artefact to view (default: all)" }
-        )
-      ),
-    }),
-    promptSnippet: "dao_artefacts — View auto-generated artefacts for approved proposals",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const state = getState();
-      const artefacts = state.artefacts[params.proposalId];
-
-      if (!artefacts) {
-        // Check if proposal exists
-        const proposal = getProposal(params.proposalId);
-        if (!proposal) {
-          return toolResult(`Proposal #${params.proposalId} not found.`);
-        }
-
-        if (proposal.status !== "controlled" && proposal.status !== "executed" && proposal.status !== "approved") {
-          return toolResult(
-            `No artefacts generated for proposal #${params.proposalId}. Run \`dao_check\` first to generate artefacts.`
-          );
-        }
-
-        // Generate artefacts on-the-fly if missing (e.g., proposal was approved but check not run)
-        const tally = tallyVotes(proposal.id, proposal.votes);
-        const plan = getPlan(proposal.id);
-        const control = state.controlResults[params.proposalId];
-        const newArtefacts = generateAllArtefacts(proposal, tally, control, plan);
-        state.artefacts[params.proposalId] = newArtefacts;
-        setState(state);
-
-        recordAudit(
-          proposal.id,
-          "control",
-          "artefacts_generated_lazy",
-          "system",
-          "7 artefacts generated on-demand via dao_artefacts"
-        );
-
-        return toolResult(formatAllArtefacts(newArtefacts));
-      }
-
-      const which = params.artefact ?? "all";
-
-      switch (which) {
-        case "decision-brief":
-          return toolResult(formatDecisionBrief(artefacts.decisionBrief));
-        case "adr":
-          return toolResult(formatADR(artefacts.adr));
-        case "risk-report":
-          return toolResult(formatRiskReport(artefacts.riskReport));
-        case "prd-lite":
-          return toolResult(formatPRDLite(artefacts.prdLite));
-        case "implementation-plan":
-          return toolResult(formatImplementationPlan(artefacts.implementationPlan));
-        case "test-plan":
-          return toolResult(formatTestPlan(artefacts.testPlan));
-        case "release-packet":
-          return toolResult(formatReleasePacket(artefacts.releasePacket));
-        default:
-          return toolResult(formatAllArtefacts(artefacts));
-      }
-    },
-  });
-
-  // ================================================================
-  // TOOL: dao_execute
-  // ================================================================
-
-  pi.registerTool({
-    name: "dao_execute",
-    label: "DAO Execute",
-    description:
-      "Execute an approved proposal by delegating to the Delivery Agent (or a specified agent) to produce a concrete implementation plan.",
-    parameters: Type.Object({
-      proposalId: Type.Number({ description: "ID of the approved proposal" }),
-      executorId: Type.Optional(
-        Type.String({
-          description: 'ID of the agent to execute (default: "delivery")',
-        })
-      ),
-    }),
-    promptSnippet: "dao_execute — Transform an approved proposal into an actionable plan",
-    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      // Accept both "approved" (legacy) and "controlled" status
-      if (proposal.status !== "approved" && proposal.status !== "controlled") {
-        return toolResult(
-          `Proposal #${proposal.id} is not approved or controlled (status: ${statusLabel(proposal.status)}). Only approved/controlled proposals can be executed.`
-        );
-      }
-
-      let warning = "";
-      if (proposal.status === "approved") {
-        warning = "\n\n> ⚠️ **Note:** This proposal was executed without passing through control gates (`dao_check`). Consider running `dao_check` before execution for better quality assurance.";
-      }
-
-      onUpdate?.({
-        content: [{ type: "text", text: "🚀 Executing proposal — delegating to Delivery Agent..." }],
-        details: undefined,
-      });
-
-      try {
-        const result = await executeProposal(proposal, params.executorId, signal);
-        storeExecutionResult(proposal.id, result);
-
-        // Audit: execution completed
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "execution_completed",
-          "system",
-          `Execution completed for proposal #${proposal.id}`
-        );
-
-        return toolResult(
-          `# Execution Plan — Proposal #${proposal.id}\n\n${result}${warning}`
-        );
-      } catch (err: any) {
-        updateProposalStatus(proposal.id, "failed");
-
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "execution_failed",
-          "system",
-          `Execution failed: ${err.message}`
-        );
-
-        return toolResult(`Execution failed: ${err.message}`);
-      }
     },
   });
 

@@ -52,6 +52,7 @@ export const isAgentOnCouncil = (agentId: string, type: ProposalType): boolean =
 /**
  * Validate that the required councils have approved a proposal.
  * Returns validation result with details.
+ * For governance-change proposals, the lead of the governance-council MUST vote "for".
  */
 export const validateCouncilApproval = (
   proposal: Proposal,
@@ -59,6 +60,7 @@ export const validateCouncilApproval = (
 ): { approved: boolean; missingCouncils: Council[]; details: string } => {
   const requiredCouncils = getCouncilsForType(proposal.type);
   const missingCouncils: Council[] = [];
+  const details: string[] = [];
 
   for (const council of requiredCouncils) {
     const members = getCouncilMembers(council);
@@ -72,14 +74,34 @@ export const validateCouncilApproval = (
     if (!councilFor) {
       missingCouncils.push(council);
     }
+
+    // Governance-change: the lead of the governance-council MUST vote "for"
+    if (proposal.type === "governance-change" && council === "governance-council") {
+      const lead = members.find(m =>
+        m.councils?.some(c => c.council === "governance-council" && c.role === "lead")
+      );
+      if (lead) {
+        const leadVote = votes.find(v => v.agentId === lead.id);
+        if (!leadVote || leadVote.position !== "for") {
+          if (!missingCouncils.includes(council)) {
+            missingCouncils.push(council);
+          }
+          details.push(`Governance council lead (${lead.name}) must vote "for" — voted "${leadVote?.position ?? "absent"}"`);
+        }
+      }
+    }
   }
 
   const approved = missingCouncils.length === 0;
-  const details = approved
+  const baseDetail = approved
     ? `All required councils approved: ${requiredCouncils.join(", ")}`
     : `Missing approval from: ${missingCouncils.join(", ")}`;
 
-  return { approved, missingCouncils, details };
+  return {
+    approved,
+    missingCouncils,
+    details: details.length > 0 ? `${baseDetail}. ${details.join(". ")}` : baseDetail,
+  };
 };
 
 /**
@@ -160,10 +182,12 @@ export const DEFAULT_COUNCIL_MEMBERSHIPS: Record<string, CouncilMembership[]> = 
   architect: [
     { council: "product-council", role: "member" },
     { council: "delivery-council", role: "lead" },
+    { council: "governance-council", role: "member" },
   ],
   critic: [
     { council: "security-council", role: "lead" },
     { council: "product-council", role: "advisor" },
+    { council: "governance-council", role: "lead" },
   ],
   prioritizer: [
     { council: "product-council", role: "member" },

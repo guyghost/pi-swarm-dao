@@ -10,17 +10,57 @@ import type { Proposal, ProposalContent, RiskZone, CompositeScore } from "../typ
 import { RISK_ZONE_DEFINITIONS } from "../types.js";
 
 /**
+ * Check if a governance-change proposal with an amendment payload
+ * should be promoted to a higher risk zone.
+ */
+const classifyAmendmentRisk = (proposal: Proposal): RiskZone | null => {
+  if (proposal.type !== "governance-change" || !proposal.amendmentPayload) {
+    return null;
+  }
+
+  const payload = proposal.amendmentPayload;
+
+  // Red zone: changes to system prompts, quorum, or agent removal
+  if (payload.type === "agent-update" && payload.changes.systemPrompt) return "red";
+  if (payload.type === "quorum-update") return "red";
+  if (payload.type === "config-update" && payload.changes.quorumPercent !== undefined) return "red";
+
+  // Orange zone minimum: agent add/remove, council changes
+  if (payload.type === "agent-add") return "orange";
+  if (payload.type === "agent-remove") return "orange";
+  if (payload.type === "council-update") return "orange";
+
+  // Weight changes: orange
+  if (payload.type === "agent-update" && payload.changes.weight !== undefined) return "orange";
+
+  return null;
+};
+
+/**
  * Classify a proposal into a risk zone based on its content and composite score.
  *
  * Decision logic:
- * 1. If composite score is already computed, use its derived zone
- * 2. Otherwise, classify based on structured content fields
+ * 1. Amendment-specific classification can escalate beyond score
+ * 2. If composite score is already computed, use its derived zone
+ * 3. Otherwise, classify based on structured content fields
  */
 export const classifyRiskZone = (proposal: Proposal): RiskZone => {
+  // Amendment-specific risk classification (can escalate beyond score)
+  const amendmentZone = classifyAmendmentRisk(proposal);
+
   // Use pre-computed score if available
   if (proposal.compositeScore) {
-    return proposal.compositeScore.riskZone;
+    const scoreZone = proposal.compositeScore.riskZone;
+    // Amendment zone can only escalate, never downgrade
+    if (amendmentZone) {
+      const zoneOrder: Record<RiskZone, number> = { green: 0, orange: 1, red: 2 };
+      return zoneOrder[amendmentZone] > zoneOrder[scoreZone] ? amendmentZone : scoreZone;
+    }
+    return scoreZone;
   }
+
+  // If amendment classification is definitive, use it
+  if (amendmentZone) return amendmentZone;
 
   const content = proposal.content;
 
@@ -98,8 +138,11 @@ const classifyFromType = (type: Proposal["type"], description: string): RiskZone
   // Release changes default to orange
   if (type === "release-change") return "orange";
 
-  // Governance changes default to orange
-  if (type === "governance-change") return "orange";
+  // Governance changes: red if amendment touches system prompt or quorum, orange otherwise
+  if (type === "governance-change") {
+    if (/system\s*prompt|quorum|weight/i.test(description)) return "red";
+    return "orange";
+  }
 
   // Check description for red signals
   if (/auth|permission|credential|security|sensitive|store\s+publication/i.test(description)) {

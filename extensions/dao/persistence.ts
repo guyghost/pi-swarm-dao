@@ -1,4 +1,4 @@
-import type { DAOState } from "./types.js";
+import type { DAOState, DAOAgent, DAOConfig } from "./types.js";
 import { createInitialState } from "./types.js";
 
 // The custom type identifier for our state entries
@@ -55,6 +55,26 @@ export function compactState(): void {
   }
 
   setState(currentState);
+}
+
+/**
+ * Create a snapshot of amendment-relevant state (agents + config) for rollback.
+ */
+export function createAmendmentSnapshot(): { agents: DAOAgent[]; config: DAOConfig; capturedAt: string } {
+  const state = currentState;
+  return {
+    agents: state.agents.map(a => ({ ...a, councils: a.councils ? [...a.councils] : [] })),
+    config: { ...state.config, typeQuorum: { ...state.config.typeQuorum }, requiredGates: [...state.config.requiredGates] },
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Restore agents and config from a pre-amendment snapshot.
+ */
+export function restoreAmendmentSnapshot(snapshot: { agents: DAOAgent[]; config: DAOConfig }): void {
+  currentState.agents = snapshot.agents;
+  currentState.config = snapshot.config;
 }
 
 /**

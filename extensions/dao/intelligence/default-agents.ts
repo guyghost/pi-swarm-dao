@@ -157,6 +157,7 @@ Adapt your analysis based on the proposal type:
     councils: [
       { council: "product-council", role: "member" },
       { council: "delivery-council", role: "lead" },
+      { council: "governance-council", role: "member" },
     ],
     name: "Solution Architect",
     role: "Functional and technical architecture",
@@ -239,6 +240,7 @@ Adapt your analysis based on the proposal type:
     councils: [
       { council: "security-council", role: "lead" },
       { council: "product-council", role: "advisor" },
+      { council: "governance-council", role: "lead" },
     ],
     name: "Critic / Risk Agent",
     role: "Risk assessment and challenge",

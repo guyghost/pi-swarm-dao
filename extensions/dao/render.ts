@@ -7,6 +7,8 @@ import type {
   DeliveryPlan,
   ChecklistItem,
   AgentRiskLevel,
+  AmendmentPayload,
+  AmendmentState,
 } from "./types.js";
 import { PROPOSAL_TYPE_LABELS } from "./types.js";
 
@@ -330,6 +332,95 @@ export const renderAgentOutputSummary = (outputs: AgentOutput[]): string => {
 
   const totalDuration = Math.max(...outputs.map((o) => o.durationMs));
   lines.push(`\n**Total wall time:** ${(totalDuration / 1000).toFixed(1)}s (parallel execution)`);
+
+  return lines.join("\n");
+};
+
+/**
+ * Render an amendment diff as a markdown table.
+ */
+export const renderAmendmentDiff = (diffs: { field: string; before: string; after: string }[]): string => {
+  if (diffs.length === 0) return "*No changes detected.*";
+
+  const lines: string[] = [];
+  lines.push("## 🔄 Amendment Preview");
+  lines.push("");
+  lines.push("| Field | Before | After |");
+  lines.push("|-------|--------|-------|");
+
+  for (const d of diffs) {
+    const before = d.before.length > 80 ? `${d.before.slice(0, 80)}…` : d.before;
+    const after = d.after.length > 80 ? `${d.after.slice(0, 80)}…` : d.after;
+    lines.push(`| \`${d.field}\` | ${before} | ${after} |`);
+  }
+
+  return lines.join("\n");
+};
+
+/**
+ * Render amendment status with state information.
+ */
+export const renderAmendmentStatus = (
+  proposal: Proposal,
+): string => {
+  if (!proposal.amendmentPayload) {
+    return "*No amendment payload on this proposal.*";
+  }
+
+  const payload = proposal.amendmentPayload;
+  const state = proposal.amendmentState ?? "pending-vote";
+  const origin = proposal.amendmentOrigin;
+
+  const stateEmoji: Record<string, string> = {
+    "pending-vote": "🗳️",
+    "approved-pending-human": "⏳",
+    "approved": "✅",
+    "executed": "🚀",
+    "rolled-back": "⏪",
+  };
+
+  const lines: string[] = [];
+  lines.push("## 📜 Amendment Status");
+  lines.push("");
+  lines.push(`**Type:** ${payload.type}`);
+  lines.push(`**State:** ${stateEmoji[state] ?? "❓"} ${state}`);
+
+  if (origin) {
+    lines.push(`**Origin:** ${origin.source}${origin.agentId ? ` (${origin.agentId})` : ""}`);
+  }
+
+  // Type-specific details
+  switch (payload.type) {
+    case "agent-update":
+      lines.push(`**Target Agent:** ${payload.agentId}`);
+      lines.push(`**Fields Changed:** ${Object.keys(payload.changes).join(", ")}`);
+      break;
+    case "agent-add":
+      lines.push(`**New Agent:** ${payload.agent.name} (${payload.agent.id})`);
+      break;
+    case "agent-remove":
+      lines.push(`**Removing Agent:** ${payload.agentId}`);
+      break;
+    case "config-update":
+      lines.push(`**Config Fields:** ${Object.keys(payload.changes).join(", ")}`);
+      break;
+    case "quorum-update":
+      lines.push(`**Quorum Types:** ${Object.keys(payload.typeQuorum).join(", ")}`);
+      break;
+    case "gate-update":
+      if (payload.addGates?.length) lines.push(`**Adding Gates:** ${payload.addGates.join(", ")}`);
+      if (payload.removeGates?.length) lines.push(`**Removing Gates:** ${payload.removeGates.join(", ")}`);
+      break;
+    case "council-update":
+      lines.push(`**Target Agent:** ${payload.agentId}`);
+      lines.push(`**Councils:** ${payload.councils.map(c => `${c.council}(${c.role})`).join(", ")}`);
+      break;
+  }
+
+  if (proposal.preAmendmentSnapshot) {
+    lines.push(`**Snapshot:** Captured at ${proposal.preAmendmentSnapshot.capturedAt}`);
+    lines.push(`**Rollback:** Available (${proposal.preAmendmentSnapshot.agents.length} agents, quorum=${(proposal.preAmendmentSnapshot.config as any).quorumPercent}%)`);
+  }
 
   return lines.join("\n");
 };

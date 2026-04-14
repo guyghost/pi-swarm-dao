@@ -74,6 +74,41 @@ export const removeAgent = (agentId: string): DAOAgent => {
 };
 
 /**
+ * Update an existing agent with partial changes.
+ * Validates: agent exists, weight range 1-10, updates lastReviewDate.
+ */
+export const updateAgent = (
+  agentId: string,
+  changes: Partial<Omit<DAOAgent, "id">>,
+): DAOAgent => {
+  const state = getState();
+  const index = state.agents.findIndex((a) => a.id === agentId);
+
+  if (index === -1) {
+    throw new Error(`Agent "${agentId}" not found`);
+  }
+
+  // Validate weight if provided
+  if (changes.weight !== undefined && (changes.weight < 1 || changes.weight > 10)) {
+    throw new Error(
+      `Weight must be between 1 and 10, got ${changes.weight}`,
+    );
+  }
+
+  // Merge changes
+  const updated: DAOAgent = {
+    ...state.agents[index],
+    ...changes,
+    id: agentId, // ID is immutable
+    lastReviewDate: new Date().toISOString().split("T")[0],
+  };
+
+  state.agents[index] = updated;
+  setState(state);
+  return updated;
+};
+
+/**
  * Get a single agent by ID.
  */
 export const getAgent = (agentId: string): DAOAgent | undefined => {
