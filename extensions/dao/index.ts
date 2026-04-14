@@ -1016,7 +1016,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       try {
-        const result = await executeProposal(proposal, undefined, signal ?? undefined);
+        // Don't pass pi's tool AbortSignal to the execution subprocess.
+        // Pi's tool timeout (~180s) is shorter than the execution timeout (300s),
+        // causing premature aborts. Execution manages its own timeout internally.
+        const result = await executeProposal(proposal, undefined);
 
         storeExecutionResult(proposal.id, result);
 
