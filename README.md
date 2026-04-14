@@ -2,6 +2,8 @@
 
 A DAO extension for the [Pi coding agent](https://github.com/badlogic/pi-mono) where specialized AI agents deliberate on proposals via weighted voting.
 
+> 📚 **[Full Documentation](docs/dao/README.md)** — Charter, Agent Registry, Policies, ADRs, Risk Register
+
 ## What is this?
 
 **pi-swarm-dao** is a Pi extension that implements a four-layer DAO governance system. Seven specialized AI agents analyze proposals in parallel, each from their own domain perspective, then cast weighted votes. The system handles the full lifecycle — from proposal creation through deliberation, quality control, and execution — with a complete audit trail throughout. Every proposal must be typed (feature, security, ux, release, or policy), which focuses agent analysis and adjusts quality gate severity.
