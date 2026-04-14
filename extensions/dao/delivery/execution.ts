@@ -47,7 +47,9 @@ export async function executeProposal(
   const promptFile = join(tmpDir, "system-prompt.md");
 
   try {
-    writeFileSync(promptFile, agent.systemPrompt, "utf-8");
+    // Use lightweight execution prompt instead of full deliberation system prompt
+    // to avoid GLM-5.1 entering long generation loops
+    writeFileSync(promptFile, EXECUTION_SYSTEM_PROMPT, "utf-8");
 
     const args = [
       "--mode", "json",
@@ -169,10 +171,40 @@ export async function executeProposal(
   }
 }
 
+/** Max chars for proposal description in execution prompt. */
+const MAX_DESCRIPTION_CHARS = 2_000;
 /** Max chars for synthesis in execution prompt (prevents oversized prompts). */
-const MAX_SYNTHESIS_CHARS = 1_500;
+const MAX_SYNTHESIS_CHARS = 1_000;
 /** Max chars per vote reasoning in execution prompt. */
-const MAX_VOTE_REASONING_CHARS = 200;
+const MAX_VOTE_REASONING_CHARS = 150;
+
+/**
+ * Lightweight execution system prompt — kept minimal to avoid LLM timeouts.
+ * The full delivery agent system prompt is designed for deliberation (voting,
+ * type adaptation, etc.) and is too heavy for execution, causing GLM-5.1
+ * to generate indefinitely.
+ */
+const EXECUTION_SYSTEM_PROMPT = `# Execution Agent
+
+You produce concise implementation plans for approved proposals.
+
+## Output Format
+Produce a plan with these sections:
+
+### Phases
+For each phase: name, duration, and numbered tasks with effort (xs/s/m/l/xl).
+
+### Branch Strategy
+One line on branching approach.
+
+### Rollback Plan
+One line on how to revert.
+
+## Constraints
+- Be concise: 200-400 words max
+- Tasks must be specific enough to create tickets
+- Always include a rollback plan
+- Do NOT include a vote section`;
 
 /**
  * Build the execution prompt with deliberation context.
@@ -183,10 +215,9 @@ const MAX_VOTE_REASONING_CHARS = 200;
  */
 const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
   const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
-  let prompt = `# Execute Approved Proposal #${proposal.id}: ${proposal.title}\n\n`;
-  prompt += `**Type:** ${typeLabel}\n\n`;
-  prompt += `> Adapt your execution plan to this proposal type (${proposal.type}).\n\n`;
-  prompt += `## Proposal Description\n${proposal.description}\n\n`;
+  let prompt = `# Implementation Plan: ${proposal.title}\n\n`;
+  prompt += `**Category:** ${typeLabel}\n\n`;
+  prompt += `## Scope\n${proposal.description.slice(0, MAX_DESCRIPTION_CHARS)}${proposal.description.length > MAX_DESCRIPTION_CHARS ? "\n\n[…truncated]" : ""}\n\n`;
 
   if (proposal.context) {
     prompt += `## Additional Context\n${proposal.context}\n\n`;
@@ -211,11 +242,9 @@ const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
     prompt += `\n`;
   }
 
-  prompt += `## Your Task\n`;
-  prompt += `This proposal has been APPROVED by the DAO. `;
-  prompt += `Produce a concise, actionable execution plan with phased tasks. `;
-  prompt += `Focus on implementation steps, branch strategy, and rollback plan. `;
-  prompt += `Be brief — avoid restating the proposal.`;
+  prompt += `## Instructions\n`;
+  prompt += `Break this into concrete implementation phases with tasks, effort estimates, branch strategy, and rollback plan.\n`;
+  prompt += `Be concise — do not restate the scope. Focus on actionable steps.`;
 
   return prompt;
 };
