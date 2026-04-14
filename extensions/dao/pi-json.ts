@@ -31,7 +31,11 @@ export function extractAssistantMessage(jsonStream: string): string {
         fullText += event.assistantMessageEvent.delta;
       }
 
-      if (event.type === "message_end" && event.message?.content) {
+      if (
+        event.type === "message_end" &&
+        event.message?.role === "assistant" &&
+        event.message?.content
+      ) {
         const textBlocks = event.message.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text);
