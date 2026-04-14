@@ -35,14 +35,15 @@ export type Council =
   | "product-council"
   | "security-council"
   | "delivery-council"
-  | "governance-council";
+  | "governance-council"
+  | "user-council";
 
 /** Map proposal type → responsible council */
 export const PROPOSAL_COUNCIL: Record<ProposalType, Council[]> = {
-  "product-feature": ["product-council"],
+  "product-feature": ["product-council", "user-council"],
   "security-change": ["security-council"],
-  "technical-change": ["product-council", "delivery-council"],
-  "release-change": ["delivery-council", "security-council"],
+  "technical-change": ["product-council", "delivery-council", "user-council"],
+  "release-change": ["delivery-council", "security-council", "user-council"],
   "governance-change": ["governance-council"],
 };
 

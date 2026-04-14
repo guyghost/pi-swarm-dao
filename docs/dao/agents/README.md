@@ -13,6 +13,9 @@
 | 5 | Prioritization Agent | [05-prioritization-agent.md](05-prioritization-agent.md) | 2 | 🟢 low |
 | 6 | Spec Writer | [06-spec-writer.md](06-spec-writer.md) | 1 | 🟢 low |
 | 7 | Delivery Agent | [07-delivery-agent.md](07-delivery-agent.md) | 1 | 🟡 medium |
+| 8 | Power User (Dev) | [08-power-user-dev.md](08-power-user-dev.md) | 1 | 🟢 low |
+| 9 | Casual User (PM) | [09-casual-user-pm.md](09-casual-user-pm.md) | 1 | 🟢 low |
+| 10 | New User (Skeptic) | [10-new-user-skeptic.md](10-new-user-skeptic.md) | 1 | 🟢 low |
 
 ## Registry Fields
 
@@ -40,7 +43,7 @@ Each card contains:
 
 | Level | Count | Agents |
 |-------|-------|--------|
-| 🟢 Low | 5 | Product Strategist, Research, Critic, Prioritization, Spec Writer |
+| 🟢 Low | 8 | Product Strategist, Research, Critic, Prioritization, Spec Writer, Power User, Casual User, New User |
 | 🟡 Medium | 2 | Solution Architect, Delivery Agent |
 | 🔴 High | 0 | — |
 | ⚫ Critical | 0 | — |

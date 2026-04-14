@@ -66,15 +66,18 @@ The DAO can modify its own agents, configuration, quorum rules, gates, and counc
 
 ## Agent Roster
 
-| # | Agent | Weight | Risk | Role |
-|---|-------|--------|------|------|
-| 1 | Product Strategist | 3 | 🟢 low | Business strategy and user value |
-| 2 | Research Agent | 2 | 🟢 low | Market and user research |
-| 3 | Solution Architect | 3 | 🟡 medium | Functional and technical architecture |
-| 4 | Critic / Risk Agent | 3 | 🟢 low | Risk assessment and challenge |
-| 5 | Prioritization Agent | 2 | 🟢 low | Impact scoring and roadmap positioning |
-| 6 | Spec Writer | 1 | 🟢 low | PRD, user stories, and acceptance criteria |
-| 7 | Delivery Agent | 1 | 🟡 medium | Implementation planning and execution |
+| # | Agent | Weight | Risk | Role | Cercle |
+|---|-------|--------|------|------|--------|
+| 1 | Product Strategist | 3 | 🟢 low | Business strategy and user value | 🔴 Governor |
+| 2 | Research Agent | 2 | 🟢 low | Market and user research | 🟡 Contributor |
+| 3 | Solution Architect | 3 | 🟡 medium | Functional and technical architecture | 🔴 Governor |
+| 4 | Critic / Risk Agent | 3 | 🟢 low | Risk assessment and challenge | 🔴 Governor |
+| 5 | Prioritization Agent | 2 | 🟢 low | Impact scoring and roadmap positioning | 🟡 Contributor |
+| 6 | Spec Writer | 1 | 🟢 low | PRD, user stories, and acceptance criteria | 🟡 Contributor |
+| 7 | Delivery Agent | 1 | 🟡 medium | Implementation planning and execution | 🟡 Contributor |
+| 8 | Power User (Dev) | 1 | 🟢 low | Advanced daily user perspective | 🟢 User |
+| 9 | Casual User (PM) | 1 | 🟢 low | Occasional user — simplicity & clarity | 🟢 User |
+| 10 | New User (Skeptic) | 1 | 🟢 low | Fresh user — onboarding & first impressions | 🟢 User |
 
 ## Configuration
 
