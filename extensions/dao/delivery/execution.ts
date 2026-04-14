@@ -59,8 +59,8 @@ export async function executeProposal(
       `Task: ${executionPrompt}`,
     ];
 
-    /** Process-level timeout (180s — execution takes longer than deliberation). */
-    const EXECUTION_TIMEOUT_MS = 180_000;
+    /** Process-level timeout (300s — execution takes longer than deliberation). */
+    const EXECUTION_TIMEOUT_MS = 300_000;
     /** Grace period after SIGTERM before force-killing with SIGKILL. */
     const SIGKILL_GRACE_MS = 5_000;
 
