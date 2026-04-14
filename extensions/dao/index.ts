@@ -48,7 +48,7 @@ import { recordAudit, getProposalAudit, formatAuditTrail } from "./control/audit
 import { generateChecklist, formatChecklist, checklistStats } from "./control/checklist.js";
 
 // Rendering
-import { renderDashboard, renderDeliberationProgress, renderHistory, renderAgentOutputSummary, renderAmendmentDiff, renderAmendmentStatus } from "./render.js";
+import { renderDashboard, renderDeliberationProgress, renderControlResult, renderHistory, renderAgentOutputSummary, renderAmendmentDiff, renderAmendmentStatus } from "./render.js";
 
 export default function daoExtension(pi: ExtensionAPI) {
   // ================================================================
@@ -612,6 +612,533 @@ export default function daoExtension(pi: ExtensionAPI) {
         renderAmendmentDiff(diffs) +
         `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
       );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_propose
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_propose",
+    label: "DAO Propose",
+    description:
+      "Create a new proposal for the DAO to deliberate on. Requires a title, type, and description.",
+    parameters: Type.Object({
+      title: Type.String({ description: "Short title for the proposal" }),
+      type: StringEnum(PROPOSAL_TYPES, { description: "Proposal type category" }),
+      description: Type.String({ description: "Detailed description of what is being proposed" }),
+      context: Type.Optional(Type.String({ description: "Additional context (market data, constraints, prior decisions)" })),
+    }),
+    promptSnippet: "dao_propose — Create a new DAO proposal for swarm deliberation",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      const proposal = createProposal(
+        params.title,
+        params.type as ProposalType,
+        params.description,
+        "user",
+        params.context,
+      );
+
+      // Classify risk zone
+      const zone = classifyRiskZone(proposal);
+      proposal.riskZone = zone;
+
+      // Audit
+      recordAudit(
+        proposal.id,
+        "governance",
+        "proposal_created",
+        "user",
+        `Proposal "${params.title}" created via dao_propose tool`,
+      );
+
+      const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
+      const typeLabel = PROPOSAL_TYPE_LABELS[params.type as ProposalType];
+
+      return toolResult(
+        `# 📋 Proposal Created — #${proposal.id}\n\n` +
+        `**Title:** ${params.title}\n` +
+        `**Type:** ${typeLabel}\n` +
+        `**Risk Zone:** ${zoneLabel}\n` +
+        `**Status:** 📝 open\n` +
+        `**Stage:** intake\n\n` +
+        `## Description\n${params.description}\n` +
+        (params.context ? `\n\n## Context\n${params.context}` : "") +
+        `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_deliberate
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_deliberate",
+    label: "DAO Deliberate",
+    description:
+      "Run full swarm deliberation on a proposal. Dispatches all 7 agents in parallel, collects votes, synthesizes results, and computes composite score.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to deliberate on" }),
+    }),
+    promptSnippet: "dao_deliberate — Run full swarm deliberation with weighted voting",
+    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      // Must be open to start deliberation
+      if (proposal.status !== "open") {
+        return toolResult(
+          `Proposal #${proposal.id} is not open (status: ${proposal.status}). Only open proposals can be deliberated.`
+        );
+      }
+
+      // Transition to deliberating
+      assertTransition(proposal.status, "deliberating");
+      updateProposalStatus(proposal.id, "deliberating");
+
+      recordAudit(
+        proposal.id,
+        "governance",
+        "deliberation_started",
+        "system",
+        `Deliberation started on proposal #${proposal.id}: ${proposal.title}`,
+      );
+
+      // Report progress
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🗳️ Starting deliberation on proposal #${proposal.id}: ${proposal.title}...` }],
+          details: {},
+        });
+      }
+
+      const startTime = Date.now();
+      const agents = state.agents;
+
+      // Dispatch the swarm
+      const agentOutputs = await dispatchSwarm(
+        proposal,
+        agents,
+        signal ?? undefined,
+        (completed, total, agentName) => {
+          if (onUpdate) {
+            const progress = renderDeliberationProgress(completed, total, agentName);
+            onUpdate({
+              content: [{ type: "text" as const, text: progress }],
+              details: {},
+            });
+          }
+        },
+      );
+
+      // Parse votes from each agent output
+      const votes = agentOutputs.map((output) => {
+        const agent = agents.find((a) => a.id === output.agentId);
+        if (output.error || !output.content) {
+          return {
+            agentId: output.agentId,
+            agentName: output.agentName,
+            position: "abstain" as const,
+            reasoning: output.error ?? "No output produced",
+            weight: agent?.weight ?? 1,
+          };
+        }
+        return parseVoteFromOutput(output.agentId, output.agentName, agent?.weight ?? 1, output.content);
+      });
+
+      // Synthesize results
+      const synthesis = synthesize(agentOutputs, votes);
+
+      // Store results
+      storeDeliberationResults(proposal.id, agentOutputs, synthesis, votes);
+
+      // Tally votes
+      const tally = tallyVotes(proposal.id, votes, proposal.type);
+
+      // Compute composite score
+      const axisScores = parseScoresFromOutput(proposal);
+      let compositeScore = calculateCompositeScore(axisScores);
+
+      // Apply malus if structured content is available
+      if (proposal.content) {
+        compositeScore = applyMalus(compositeScore, proposal.content.permissionsImpact, proposal.content.dataImpact);
+      }
+
+      storeCompositeScore(proposal.id, compositeScore);
+
+      // Update proposal status based on tally
+      const newStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
+      assertTransition("deliberating", newStatus);
+      updateProposalStatus(proposal.id, newStatus);
+
+      const durationMs = Date.now() - startTime;
+
+      // Audit
+      recordAudit(
+        proposal.id,
+        "intelligence",
+        "deliberation_completed",
+        "system",
+        `Deliberation completed: ${newStatus} (${tally.weightedFor}/${tally.totalVotingWeight} weighted for, score ${compositeScore.weighted}/100)`,
+        { durationMs, tally: { approved: tally.approved, weightedFor: tally.weightedFor, totalVotingWeight: tally.totalVotingWeight } },
+      );
+
+      // Format results
+      const tallyFormatted = formatTallyResult(tally, proposal.type);
+      const scoreFormatted = formatCompositeScore(compositeScore);
+      const agentSummary = renderAgentOutputSummary(agentOutputs);
+      const zoneFormatted = formatZoneClassification(proposal);
+
+      const verdict = tally.approved ? "✅ APPROVED" : "❌ REJECTED";
+      const nextStep = tally.approved
+        ? `Run \`dao_check\` with proposalId ${proposal.id} to run control gates.`
+        : "The proposal was rejected. You may revise and create a new proposal.";
+
+      return toolResult(
+        `# 🗳️ Deliberation Complete — #${proposal.id}: ${proposal.title}\n\n` +
+        `**Verdict:** ${verdict}\n` +
+        `**Duration:** ${(durationMs / 1000).toFixed(1)}s (parallel execution)\n\n` +
+        tallyFormatted + "\n\n" +
+        scoreFormatted + "\n\n" +
+        zoneFormatted + "\n\n" +
+        agentSummary + "\n\n" +
+        `---\n\n` +
+        `## Synthesis\n${synthesis.slice(0, 2000)}${synthesis.length > 2000 ? "\n\n[...truncated]" : ""}\n\n` +
+        `---\n\n` +
+        `**Next:** ${nextStep}`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_check
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_check",
+    label: "DAO Check",
+    description:
+      "Run control gates on an approved proposal before execution. Checks quorum quality, risk threshold, vote consensus, and more.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to check" }),
+    }),
+    promptSnippet: "dao_check — Run control gates on an approved proposal",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`
+        );
+      }
+
+      // Run all gates
+      const controlResult = runGates(proposal);
+
+      // Generate checklist
+      const checklist = generateChecklist(proposal);
+      controlResult.checklist = checklist;
+
+      const stats = checklistStats(checklist);
+
+      // Update status to controlled if all gates passed
+      if (controlResult.allGatesPassed && proposal.status !== "controlled") {
+        assertTransition(proposal.status, "controlled");
+        updateProposalStatus(proposal.id, "controlled");
+      }
+
+      // Audit
+      recordAudit(
+        proposal.id,
+        "control",
+        controlResult.allGatesPassed ? "gates_passed" : "gates_failed",
+        "system",
+        `Control check: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings, ${stats.checked}/${stats.total} checklist items`,
+        { allGatesPassed: controlResult.allGatesPassed },
+      );
+
+      // Format results
+      const gatesFormatted = renderControlResult(controlResult);
+      const checklistFormatted = formatChecklist(checklist);
+
+      const nextStep = controlResult.allGatesPassed
+        ? `Run \`dao_plan\` with proposalId ${proposal.id} to generate the delivery plan.`
+        : "Resolve blockers before proceeding. Address the failed gates above.";
+
+      return toolResult(
+        gatesFormatted + "\n\n" +
+        checklistFormatted + "\n\n" +
+        `---\n\n**Next:** ${nextStep}`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_plan
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_plan",
+    label: "DAO Plan",
+    description:
+      "Generate or view the delivery plan for an approved/controlled proposal. Parses the Delivery Agent output into phases and tasks.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to plan" }),
+    }),
+    promptSnippet: "dao_plan — Generate structured delivery plan",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved" && proposal.status !== "controlled" && proposal.status !== "executed") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`
+        );
+      }
+
+      // Check if plan already exists
+      const existingPlan = getPlan(proposal.id);
+      if (existingPlan) {
+        return toolResult(
+          formatPlan(existingPlan) +
+          `\n\n---\n\nRun \`dao_execute\` with proposalId ${proposal.id} to execute, or \`dao_artefacts\` to view generated artefacts.`
+        );
+      }
+
+      // Parse delivery plan from the delivery agent's output
+      const deliveryOutput = proposal.agentOutputs.find((o) => o.agentId === "delivery");
+      const plan = parseDeliveryPlan(
+        proposal.id,
+        deliveryOutput?.content ?? proposal.description,
+      );
+
+      storePlan(plan);
+
+      // Audit
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "plan_generated",
+        "system",
+        `Delivery plan generated: ${plan.phases.length} phases, ${plan.phases.reduce((s, p) => s + p.tasks.length, 0)} tasks, estimated ${plan.estimatedDuration}`,
+      );
+
+      return toolResult(
+        formatPlan(plan) +
+        `\n\n---\n\nRun \`dao_execute\` with proposalId ${proposal.id} to execute, or \`dao_artefacts\` to view generated artefacts.`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_execute
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_execute",
+    label: "DAO Execute",
+    description:
+      "Execute a controlled/approved proposal by delegating to the Delivery Agent. Only proposals that passed control gates should be executed.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to execute" }),
+    }),
+    promptSnippet: "dao_execute — Execute an approved proposal via the Delivery Agent",
+    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). It must pass deliberation and control gates first.`
+        );
+      }
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_started",
+        "user",
+        `Execution started for proposal #${proposal.id}: ${proposal.title}`,
+      );
+
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🚀 Executing proposal #${proposal.id}: ${proposal.title}...` }],
+          details: {},
+        });
+      }
+
+      try {
+        const result = await executeProposal(proposal, undefined, signal ?? undefined);
+
+        storeExecutionResult(proposal.id, result);
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "execution_completed",
+          "system",
+          `Execution completed successfully for proposal #${proposal.id}`,
+        );
+
+        return toolResult(
+          `# 🚀 Execution Complete — #${proposal.id}: ${proposal.title}\n\n` +
+          `**Status:** ✅ Executed\n\n` +
+          `## Execution Output\n${result}\n\n` +
+          `---\n\nRun \`dao_artefacts\` with proposalId ${proposal.id} to view all generated artefacts.`
+        );
+      } catch (err: any) {
+        updateProposalStatus(proposal.id, "failed");
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "execution_failed",
+          "system",
+          `Execution failed: ${err.message}`,
+        );
+
+        return toolResult(
+          `# ⚠️ Execution Failed — #${proposal.id}: ${proposal.title}\n\n` +
+          `**Error:** ${err.message}\n\n` +
+          `The proposal status has been set to \"failed\". Review the error and try again.`
+        );
+      }
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_artefacts
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_artefacts",
+    label: "DAO Artefacts",
+    description:
+      "View auto-generated artefacts for a proposal (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet). Generates them if not yet created.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to view artefacts for" }),
+      artefact: Type.Optional(StringEnum(
+        ["all", "decision-brief", "adr", "risk-report", "prd-lite", "implementation-plan", "test-plan", "release-packet"],
+        { description: "Specific artefact to view (default: all)" },
+      )),
+    }),
+    promptSnippet: "dao_artefacts — View auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD, Plan, Tests, Release)",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      // Must have deliberation results to generate artefacts
+      if (proposal.agentOutputs.length === 0) {
+        return toolResult(
+          `Proposal #${proposal.id} has no deliberation results. Run \`dao_deliberate\` first.`
+        );
+      }
+
+      const artefact = params.artefact ?? "all";
+
+      // Generate artefacts if not yet cached
+      let artefacts = state.artefacts[proposal.id];
+      if (!artefacts) {
+        // Need tally for decision brief
+        const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
+        const controlResult = state.controlResults[proposal.id];
+        const plan = getPlan(proposal.id);
+
+        artefacts = generateAllArtefacts(proposal, tally, controlResult, plan);
+        state.artefacts[proposal.id] = artefacts;
+        setState(state);
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "artefacts_generated",
+          "system",
+          `Generated 7 artefacts for proposal #${proposal.id}`,
+        );
+      }
+
+      // Return specific artefact or all
+      switch (artefact) {
+        case "decision-brief":
+          return toolResult(formatDecisionBrief(artefacts.decisionBrief));
+        case "adr":
+          return toolResult(formatADR(artefacts.adr));
+        case "risk-report":
+          return toolResult(formatRiskReport(artefacts.riskReport));
+        case "prd-lite":
+          return toolResult(formatPRDLite(artefacts.prdLite));
+        case "implementation-plan":
+          return toolResult(formatImplementationPlan(artefacts.implementationPlan));
+        case "test-plan":
+          return toolResult(formatTestPlan(artefacts.testPlan));
+        case "release-packet":
+          return toolResult(formatReleasePacket(artefacts.releasePacket));
+        default:
+          return toolResult(
+            formatArtefactsSummary(artefacts) + "\n\n---\n\n" + formatAllArtefacts(artefacts)
+          );
+      }
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_audit
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_audit",
+    label: "DAO Audit",
+    description:
+      "View the full audit trail for a specific proposal or all proposals.",
+    parameters: Type.Object({
+      proposalId: Type.Optional(Type.Number({ description: "ID of the proposal to audit (omit for all)" })),
+    }),
+    promptSnippet: "dao_audit — View audit trail for a proposal or all proposals",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+
+      if (params.proposalId !== undefined) {
+        const proposal = getProposal(params.proposalId);
+        if (!proposal) {
+          return toolResult(`Proposal #${params.proposalId} not found.`);
+        }
+
+        const entries = getProposalAudit(params.proposalId);
+        if (entries.length === 0) {
+          return toolResult(`No audit entries found for proposal #${params.proposalId}.`);
+        }
+
+        return toolResult(formatAuditTrail(entries));
+      }
+
+      // All proposals
+      const trail = formatAuditTrail(state.auditLog);
+      return toolResult(trail);
     },
   });
 
