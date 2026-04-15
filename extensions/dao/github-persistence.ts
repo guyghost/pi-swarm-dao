@@ -43,6 +43,62 @@ const ZONE_LABELS: Record<string, string> = {
   red: "dao-zone:red",
 };
 
+/** All labels the DAO needs, with their color and description. */
+const DAO_LABELS: Array<{ name: string; color: string; description: string }> = [
+  { name: "dao-proposal", color: "1D76DB", description: "DAO governance proposal" },
+  // Status labels
+  { name: "dao-status:open", color: "EDEDED", description: "Proposal open for deliberation" },
+  { name: "dao-status:approved", color: "0E8A16", description: "Proposal approved by vote" },
+  { name: "dao-status:controlled", color: "BFD4F2", description: "Passed control gates" },
+  { name: "dao-status:rejected", color: "D93F0B", description: "Proposal rejected" },
+  { name: "dao-status:executed", color: "006B75", description: "Proposal executed" },
+  { name: "dao-status:failed", color: "D93F0B", description: "Execution failed" },
+  { name: "dao-status:implemented", color: "0E8A16", description: "Implemented & delivered" },
+  // Type labels
+  { name: "dao-type:product-feature", color: "FEF2C0", description: "Product feature proposal" },
+  { name: "dao-type:security-change", color: "B60205", description: "Security change proposal" },
+  { name: "dao-type:technical-change", color: "BFDADC", description: "Technical change proposal" },
+  { name: "dao-type:release-change", color: "C2E0C6", description: "Release change proposal" },
+  { name: "dao-type:governance-change", color: "D4C5F9", description: "Governance change proposal" },
+  // Zone labels
+  { name: "dao-zone:green", color: "0E8A16", description: "Risk zone: green (auto-approve)" },
+  { name: "dao-zone:orange", color: "D93F0B", description: "Risk zone: orange (council review)" },
+  { name: "dao-zone:red", color: "B60205", description: "Risk zone: red (formal vote + security)" },
+];
+
+/** Whether labels have been ensured in this session. */
+let labelsEnsured = false;
+
+/**
+ * Ensure all DAO labels exist in the repository.
+ * Idempotent — uses --force to avoid errors if labels already exist.
+ * Called lazily on first proposal creation.
+ */
+export const ensureLabels = (): void => {
+  if (labelsEnsured) return;
+
+  for (const label of DAO_LABELS) {
+    try {
+      execFileSync("gh", [
+        "label", "create",
+        label.name,
+        "--color", label.color,
+        "--description", label.description,
+        "--force",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        timeout: 10_000,
+        stdio: "pipe",  // suppress output
+      });
+    } catch {
+      // Silently ignore — labels may fail if gh is not available or no permissions
+    }
+  }
+
+  labelsEnsured = true;
+};
+
 // ── GitHub CLI Helper ────────────────────────────────────────
 
 /** Run a gh command and return stdout. Throws on failure. */
@@ -204,6 +260,9 @@ export const ghCreateProposal = (proposal: Proposal): number | null => {
   if (issueMap.has(proposal.id)) {
     return issueMap.get(proposal.id)!;
   }
+
+  // Ensure DAO labels exist before creating the issue
+  ensureLabels();
 
   const body = buildProposalBody(proposal);
   const labels = buildLabels(proposal);
