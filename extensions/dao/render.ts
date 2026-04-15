@@ -98,6 +98,8 @@ export const renderDashboard = (state: DAOState): string => {
   lines.push("## 📋 Proposals");
   if (state.proposals.length === 0) {
     lines.push("No proposals yet.");
+    lines.push("");
+    lines.push("> 💡 **New here?** Run `/dao hello` for a guided tour, or `/dao-roundtable` to let agents suggest ideas.");
   } else {
     const open = state.proposals.filter((p) => p.status === "open" || p.status === "deliberating");
     const resolved = state.proposals.filter(

@@ -2022,6 +2022,188 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // COMMAND: /dao hello — First-Run Onboarding (Proposal #10)
+  // ================================================================
+
+  pi.registerCommand("dao hello", {
+    description: "Guided first-run onboarding: meet the agents, create your first proposal, see deliberation in action",
+    async handler(_args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+
+      // Auto-initialize if needed
+      if (!state.initialized) {
+        initializeAgents();
+        recordAudit(0, "governance", "auto_initialized", "system", "DAO auto-initialized via /dao hello");
+      }
+
+      const updatedState = getState();
+
+      // Check if already onboarded
+      if ((updatedState as any).onboardingCompleted) {
+        pi.sendMessage({
+          customType: "dao-hello",
+          content: "# 👋 Welcome Back!\n\nYou've already completed onboarding.\n\nHere's a refresher:\n- `/dao` — dashboard\n- `/dao-propose` — create a proposal\n- `/dao-deliberate` — run swarm deliberation\n- `/dao:ship` — full pipeline in one command\n- `/dao-roundtable` — ask agents for ideas\n\nRun `/dao` to see your proposals.",
+          display: true,
+        });
+        return;
+      }
+
+      // ── STEP 1: Welcome ────────────────────────────────────
+      pi.sendMessage({
+        customType: "dao-hello",
+        content:
+          "# 👋 Welcome to DAO Swarm!\n\n" +
+          "The DAO is a **multi-agent governance system** that helps you make better decisions.\n" +
+          "10 specialized agents analyze your proposals, debate them, vote, and generate implementation plans.\n\n" +
+          "This quick tour will show you how it works in ~2 minutes.\n\n" +
+          "---\n\n" +
+          "*Press Enter or say \"continue\" to proceed...*",
+        display: true,
+      });
+
+      // ── STEP 2: Meet the Agents ───────────────────────────
+      const agents = updatedState.agents;
+      let agentIntro = "# 🏛️ Meet Your Agents\n\n";
+      agentIntro += "These are the 10 agents that will analyze your proposals:\n\n";
+      agentIntro += "| # | Agent | Role | Weight |\n";
+      agentIntro += "|---|-------|------|--------|\n";
+      for (let i = 0; i < agents.length; i++) {
+        const a = agents[i];
+        agentIntro += `| ${i + 1} | **${a.name}** | ${a.role} | ${a.weight} |\n`;
+      }
+      agentIntro += "\n**Total weight:** " + agents.reduce((s, a) => s + a.weight, 0) + "\n\n";
+      agentIntro += "> Higher weight = more influence on the final decision.\n";
+      agentIntro += "> Agents vote **for**, **against**, or **abstain** — and explain their reasoning.\n\n";
+      agentIntro += "---\n\n*Press Enter to continue...*";
+
+      pi.sendMessage({
+        customType: "dao-hello",
+        content: agentIntro,
+        display: true,
+      });
+
+      // ── STEP 3: Quick Questionnaire (only in UI mode) ─────
+      let projectName = "my-project";
+      let projectGoal = "ship a feature";
+
+      if (ctx.hasUI) {
+        try {
+          projectName = (await ctx.ui.input("What's your project name?", "my-project")) ?? "my-project";
+
+          const goalChoice = await ctx.ui.select(
+            "What's your primary goal?",
+            [
+              "Ship a feature",
+              "Improve code quality",
+              "Add governance process",
+              "Explore the tool",
+            ],
+          );
+          if (goalChoice) projectGoal = goalChoice;
+        } catch {
+          // User cancelled — use defaults
+        }
+      }
+
+      // ── STEP 4: Auto-generate Starter Proposal ──────────────
+      const goalTypeMap: Record<string, string> = {
+        "Ship a feature": "product-feature",
+        "Improve code quality": "technical-change",
+        "Add governance process": "governance-change",
+        "Explore the tool": "product-feature",
+      };
+      const proposalType = goalTypeMap[projectGoal] || "product-feature";
+
+      const typeLabel = PROPOSAL_TYPE_LABELS[proposalType as keyof typeof PROPOSAL_TYPE_LABELS] || proposalType;
+
+      const starterDescription = `Auto-generated starter proposal for **${projectName}**.\n\n` +
+        `**Problem:** ${projectName} needs a clear direction for its next iteration. Without a structured approach, development risks becoming unfocused.\n\n` +
+        `**Solution:** Define the top priority for the next sprint based on the goal: _${projectGoal}_. Break it down into concrete deliverables with measurable outcomes.\n\n` +
+        `**Why Now:** Starting with a clear proposal sets the tone for structured governance and ensures every change is deliberate.`;
+
+      const starterTitle = `Starter: Define ${projectGoal} priority for ${projectName}`;
+
+      const proposal = createProposal(
+        starterTitle,
+        proposalType as any,
+        starterDescription,
+        "user",
+        `Auto-generated by /dao hello onboarding`
+      );
+      const zone = classifyRiskZone(proposal);
+      proposal.riskZone = zone;
+
+      // Mark as onboarding proposal
+      (proposal as any).isDemo = true;
+
+      ghCreateProposal(proposal);
+
+      pi.sendMessage({
+        customType: "dao-hello",
+        content:
+          `# ✨ Your First Proposal Has Been Created!\n\n` +
+          `**Proposal #${proposal.id}:** ${starterTitle}\n` +
+          `**Type:** ${typeLabel}\n` +
+          `**Status:** Open\n\n` +
+          `This is a *real* proposal — you can deliberate on it, run it through control gates, and execute it.\n\n` +
+          `---\n\n*Press Enter to see what happens next...*`,
+        display: true,
+      });
+
+      // ── STEP 5: Explain the Pipeline ───────────────────────
+      pi.sendMessage({
+        customType: "dao-hello",
+        content:
+          "# 🔄 The DAO Pipeline\n\n" +
+          "Here's what happens when you ship a proposal:\n\n" +
+          "| Step | Command | What Happens |\n" +
+          "|------|---------|-------------|\n" +
+          "| 🗳️ **Deliberate** | `/dao-deliberate` | 10 agents analyze, debate, and vote |\n" +
+          "| 🛡️ **Check** | `/dao-check` | Control gates verify quality & risk |\n" +
+          "| 🚀 **Execute** | `/dao-execute` | Delivery plan generated |\n" +
+          "\n" +
+          "Or do it all at once:\n\n" +
+          "| Command | What It Does |\n" +
+          "|---------|-------------|\n" +
+          "| `/dao:ship` | Full pipeline in one command |\n" +
+          "| `/dao-roundtable` | Ask agents to suggest ideas |\n" +
+          "| `/dao` | See the dashboard |\n\n" +
+          "---\n\n*Press Enter for your next steps...*",
+        display: true,
+      });
+
+      // ── STEP 6: Next Steps ─────────────────────────────────
+      (updatedState as any).onboardingCompleted = true;
+
+      pi.sendMessage({
+        customType: "dao-hello",
+        content:
+          "# 🎯 Your Next Steps\n\n" +
+          "You're all set! Here's what to try:\n\n" +
+          `1. \`/dao-deliberate ${proposal.id}\` — deliberate on your starter proposal` + "\n" +
+          `2. \`/dao:ship ${proposal.id}\` — ship it through the full pipeline` + "\n" +
+          "3. `/dao-roundtable` — let agents suggest more proposals\n" +
+          "4. `/dao` — see your dashboard anytime\n\n" +
+          "**Pro tips:**\n" +
+          "- Use `dao_propose` to create custom proposals\n" +
+          "- Use `dao_rate` after execution to track outcomes\n" +
+          "- Use `dao_dashboard` to see score distributions\n\n" +
+          "---\n\n" +
+          "Welcome to the swarm! 🐝",
+        display: true,
+      });
+
+      recordAudit(
+        proposal.id,
+        "governance",
+        "onboarding_completed",
+        "user",
+        `Onboarding completed via /dao hello. Starter proposal #${proposal.id} created.`,
+      );
+    },
+  });
+
+  // ================================================================
   // TOOL: dao_roundtable
   // ================================================================
 
