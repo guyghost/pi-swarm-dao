@@ -1,7 +1,7 @@
-// Tests for technical change
+// Tests for proposal implementation
 import { describe, it, expect } from "vitest";
 
-describe("Technical change", () => {
+describe("Proposal implementation", () => {
   it("should pass placeholder test", () => {
     expect(true).toBe(true);
   });
