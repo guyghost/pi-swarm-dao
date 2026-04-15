@@ -28,6 +28,8 @@ import { synthesize } from "./intelligence/synthesis.js";
 
 // Layer 3: Delivery
 import { executeProposal } from "./delivery/execution.js";
+import { getOutcome, initOutcome, addRating, addMetric, markReviewed, generateDashboard } from "./delivery/outcomes.js";
+import { captureSnapshot, updateSnapshotFiles, getSnapshot, performDryRun, performRollback } from "./delivery/dry-run.js";
 
 // Round Table
 import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
@@ -127,6 +129,10 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- \`dao_execute\` → execute controlled/approved proposals`;
     daoContext += `\n- \`dao_artefacts\` → view auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD Lite, Implementation Plan, Test Plan, Release Packet)`;
     daoContext += `\n- \`dao_audit\` → view full audit trail`;
+    daoContext += `\n- \`dao_rate\` → rate proposal outcomes post-execution (1-5 stars)`;
+    daoContext += `\n- \`dao_dashboard\` → view outcome tracking dashboard`;
+    daoContext += `\n- \`dao_dry_run\` → preview execution without applying changes`;
+    daoContext += `\n- \`dao_rollback\` → revert proposal to pre-execution snapshot`;
     daoContext += `\n\n**Self-Amending Tools:**`;
     daoContext += `\n- \`dao_propose_amendment\` → propose changes to DAO agents, config, quorum, gates, or councils`;
     daoContext += `\n- \`dao_update_agent\` → shortcut to propose agent property changes (creates governance-change proposal)`;
@@ -1049,6 +1055,9 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       try {
+        // Capture pre-execution snapshot for rollback (Proposal #8)
+        captureSnapshot(proposal.id);
+
         // Don't pass pi's tool AbortSignal to the execution subprocess.
         // Pi's tool timeout (~180s) would cause premature aborts.
         // Execution has no internal timeout — it runs until completion or user abort (Ctrl+C).
@@ -1852,6 +1861,170 @@ export default function daoExtension(pi: ExtensionAPI) {
         `| Branch | ${params.branch ?? "main"} |\n\n` +
         `**Commits:**\n${params.commits.map(c => `- \`${c}\``).join("\n")}\n\n` +
         `GitHub issue closed as completed.`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_rate (Proposal #6 — Outcome Tracking)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_rate",
+    label: "DAO Rate Proposal",
+    description:
+      "Rate a proposal's outcome post-execution (1-5 stars). Tracks whether proposals deliver their intended value.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the executed proposal to rate" }),
+      score: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4), Type.Literal(5)], {
+        description: "Rating: 1=failure, 2=below expectations, 3=met expectations, 4=exceeded, 5=far exceeded",
+      }),
+      comment: Type.String({ description: "Why this rating? What was the actual outcome?" }),
+      metricName: Type.Optional(Type.String({ description: "Optional: metric name to track (e.g., 'deliberation_latency')" })),
+      metricBefore: Type.Optional(Type.String({ description: "Optional: metric value before" })),
+      metricAfter: Type.Optional(Type.String({ description: "Optional: metric value after" })),
+    }),
+    promptSnippet: "dao_rate — Rate a proposal outcome post-execution",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "executed" && proposal.status !== "failed") {
+        return toolResult(
+          `Proposal #${proposal.id} has status "${proposal.status}". Only executed or failed proposals can be rated.`
+        );
+      }
+
+      const outcome = addRating(params.proposalId, "user", params.score, params.comment);
+
+      // Add optional metric
+      if (params.metricName && params.metricBefore && params.metricAfter) {
+        addMetric(params.proposalId, params.metricName, params.metricBefore, params.metricAfter);
+      }
+
+      const stars = "★".repeat(params.score) + "☆".repeat(5 - params.score);
+
+      return toolResult(
+        `# 📊 Outcome Rated — #${params.proposalId}: ${proposal.title}\n\n` +
+        `**Rating:** ${stars} (${params.score}/5)\n\n` +
+        `**Comment:** ${params.comment}\n\n` +
+        `**Overall Score:** ${outcome.overallScore.toFixed(1)}/5 (${outcome.ratings.length} rating${outcome.ratings.length > 1 ? "s" : ""})\n\n` +
+        `---\n\nRun \`dao_dashboard\` to see all tracked outcomes.`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_dashboard (Proposal #6 — Outcome Dashboard)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_dashboard",
+    label: "DAO Outcome Dashboard",
+    description:
+      "View the outcome tracking dashboard showing proposal success rates, score distributions, and metrics across all tracked proposals.",
+    parameters: Type.Object({}),
+    promptSnippet: "dao_dashboard — View outcome tracking dashboard",
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+      const dashboard = generateDashboard();
+      return toolResult(dashboard);
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_dry_run (Proposal #8 — Dry-Run)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_dry_run",
+    label: "DAO Dry-Run",
+    description:
+      "Preview what an execution would do without applying changes. Shows affected files, risks, and estimated duration. Takes a snapshot for potential rollback.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to dry-run" }),
+    }),
+    promptSnippet: "dao_dry_run — Preview execution without applying changes",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "approved" && proposal.status !== "controlled") {
+        return toolResult(
+          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Only approved proposals can be dry-run.`
+        );
+      }
+
+      // Capture snapshot before anything happens
+      const snapshot = captureSnapshot(params.proposalId);
+
+      // Use execution result if available, otherwise use proposal description
+      const plan = proposal.executionResult || proposal.description;
+      const result = performDryRun(params.proposalId, plan);
+
+      recordAudit(
+        params.proposalId,
+        "delivery",
+        "dry_run",
+        "user",
+        `Dry-run performed for proposal #${params.proposalId}`,
+      );
+
+      const canProceedIcon = result.canProceed ? "✅" : "⚠️";
+
+      return toolResult(
+        `# 🧪 Dry-Run Preview — #${params.proposalId}: ${proposal.title}\n\n` +
+        `${canProceedIcon} **Can Proceed:** ${result.canProceed}\n\n` +
+        `**Snapshot:** ${snapshot.commitSha} on \`${snapshot.branch}\`\n\n` +
+        `${result.preview}\n\n` +
+        `---\n\n` +
+        `Run \`dao_execute\` with proposalId ${params.proposalId} to execute, or \`dao_rollback\` to revert.`
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_rollback (Proposal #8 — Rollback)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_rollback",
+    label: "DAO Rollback",
+    description:
+      "Rollback a proposal execution by reverting files to the pre-execution snapshot. Only works if a dry-run or execution snapshot exists.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to rollback" }),
+    }),
+    promptSnippet: "dao_rollback — Revert proposal execution to pre-execution snapshot",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      const result = performRollback(params.proposalId);
+
+      recordAudit(
+        params.proposalId,
+        "delivery",
+        result.success ? "rollback_succeeded" : "rollback_failed",
+        "user",
+        `Rollback ${result.success ? "succeeded" : "failed"} for proposal #${params.proposalId}: ${result.message}`,
+      );
+
+      if (result.success) {
+        // Update proposal status back to controlled
+        updateProposalStatus(params.proposalId, "controlled");
+      }
+
+      const icon = result.success ? "✅" : "❌";
+
+      return toolResult(
+        `# ${icon} Rollback — #${params.proposalId}: ${proposal.title}\n\n` +
+        `${result.message}`
       );
     },
   });

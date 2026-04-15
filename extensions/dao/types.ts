@@ -202,6 +202,71 @@ export interface ProposalContent {
   recommendedDecision: string;
 }
 
+// ── Dry-Run & Rollback (Proposal #8) ────────────────────────
+
+/** Snapshot of files/state before execution for rollback */
+export interface ExecutionSnapshot {
+  proposalId: number;
+  timestamp: string;
+  branch: string;
+  commitSha: string;
+  filesChanged: string[];
+  stateSnapshot: string;  // JSON stringified DAOState
+}
+
+/** Result of a dry-run execution */
+export interface DryRunResult {
+  proposalId: number;
+  preview: string;        // What would happen
+  filesAffected: string[];
+  risks: string[];
+  estimatedDuration: string;
+  canProceed: boolean;
+}
+
+// ── Outcome Tracking (Proposal #6) ───────────────────────────
+
+/** Rating for a proposal outcome (post-execution) */
+export interface OutcomeRating {
+  proposalId: number;
+  rater: string;           // who rated (human or agent id)
+  score: 1 | 2 | 3 | 4 | 5;  // 1=failure, 5=exceeded expectations
+  comment: string;
+  ratedAt: string;
+}
+
+/** Before/after metric snapshot for outcome tracking */
+export interface MetricSnapshot {
+  name: string;
+  before: string;
+  after: string;
+  unit?: string;
+  capturedAt: string;
+}
+
+/** Full outcome record for a proposal */
+export interface ProposalOutcome {
+  proposalId: number;
+  ratings: OutcomeRating[];
+  metrics: MetricSnapshot[];
+  overallScore: number;    // average of ratings, 0 if unrated
+  status: "pending" | "tracked" | "reviewed";
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Acceptance Criteria (Given/When/Then) ──────────────────────
+
+/** A structured acceptance criterion in Given/When/Then format */
+export interface AcceptanceCriterion {
+  id: string;            // e.g. "AC-1"
+  given: string;         // precondition
+  when: string;          // action/trigger
+  then: string;          // expected result
+  met?: boolean;         // checked during control gate
+  evidence?: string;     // how it was verified
+}
+
 // ── Proposal Status (backward compat with lifecycle) ─────────
 
 export type ProposalStatus =
@@ -363,6 +428,9 @@ export interface Proposal {
   // Structured content (V2)
   content?: ProposalContent;
 
+  // Acceptance Criteria (V2 — Proposal #10)
+  acceptanceCriteria?: AcceptanceCriterion[];
+
   // Risk & Scoring
   riskZone?: RiskZone;
   compositeScore?: CompositeScore;
@@ -457,6 +525,10 @@ export interface DAOState {
   controlResults: Record<number, ControlCheckResult>;
   deliveryPlans: Record<number, DeliveryPlan>;
   artefacts: Record<number, DAOArtefacts>;
+  // Outcome Tracking (Proposal #6)
+  outcomes: Record<number, ProposalOutcome>;
+  // Dry-Run & Rollback (Proposal #8)
+  snapshots: Record<number, ExecutionSnapshot>;
 }
 
 /** Result of a vote tally */
@@ -675,5 +747,7 @@ export function createInitialState(): DAOState {
     controlResults: {},
     deliveryPlans: {},
     artefacts: {},
+    outcomes: {},
+    snapshots: {},
   };
 }

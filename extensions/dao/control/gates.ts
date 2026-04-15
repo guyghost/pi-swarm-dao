@@ -495,6 +495,45 @@ const gateCircularAmendment = (proposal: Proposal): GateResult => {
 
 type GateFn = (proposal: Proposal) => GateResult;
 
+/**
+ * acceptance-criteria: Verify structured acceptance criteria are defined and met.
+ * PASS if: proposal has acceptanceCriteria and all are marked met.
+ * WARNING if: no acceptance criteria defined (advisory — not required for all proposals).
+ * BLOCKER if: criteria defined but some are not met.
+ */
+const gateAcceptanceCriteria = (proposal: Proposal): GateResult => {
+  if (!proposal.acceptanceCriteria || proposal.acceptanceCriteria.length === 0) {
+    return {
+      gateId: "acceptance-criteria",
+      name: "Acceptance Criteria",
+      passed: true,
+      severity: "warning",
+      message: "No structured acceptance criteria defined — advisory only",
+      details: { criteriaCount: 0 },
+    };
+  }
+
+  const total = proposal.acceptanceCriteria.length;
+  const met = proposal.acceptanceCriteria.filter(c => c.met === true).length;
+  const unmet = proposal.acceptanceCriteria.filter(c => c.met !== true);
+  const allMet = met === total;
+
+  return {
+    gateId: "acceptance-criteria",
+    name: "Acceptance Criteria",
+    passed: allMet,
+    severity: allMet ? "info" : "blocker",
+    message: allMet
+      ? `All ${total} acceptance criteria met`
+      : `${total - met}/${total} acceptance criteria not met: ${unmet.map(c => c.id).join(", ")}`,
+    details: {
+      total,
+      met,
+      unmet: unmet.map(c => ({ id: c.id, given: c.given, then: c.then })),
+    },
+  };
+};
+
 const GATES: Record<string, GateFn> = {
   "quorum-quality": gateQuorumQuality,
   "risk-threshold": gateRiskThreshold,
@@ -507,6 +546,7 @@ const GATES: Record<string, GateFn> = {
   "weight-conservation": gateWeightConservation,
   "prompt-integrity": gatePromptIntegrity,
   "circular-amendment": gateCircularAmendment,
+  "acceptance-criteria": gateAcceptanceCriteria,
 };
 
 // ── Public API ───────────────────────────────────────────────
