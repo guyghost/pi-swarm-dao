@@ -6,6 +6,7 @@ import type { DAOAgent, Proposal, AgentOutput } from "../types.js";
 import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState } from "../persistence.js";
 import { extractAssistantMessage } from "../pi-json.js";
+import { detectHostContext, buildAgentHostContext } from "../host-context.js";
 
 /**
  * Run a concurrency-limited map over an array.
@@ -38,9 +39,13 @@ const mapWithConcurrency = async <T, R>(
  */
 const formatProposalPrompt = (proposal: Proposal): string => {
   const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
+  const hostCtx = detectHostContext();
   let prompt = `# Proposal #${proposal.id}: ${proposal.title}\n\n`;
   prompt += `**Type:** ${typeLabel}\n\n`;
-  prompt += `> Adapt your analysis to this proposal type (${proposal.type}). Focus on aspects most relevant to this domain.\n\n`;
+  prompt += `**Host Project:** ${hostCtx.repoSlug} (${hostCtx.language}${hostCtx.framework ? `, ${hostCtx.framework}` : ""})\n`;
+  prompt += `**Branch:** ${hostCtx.branch}\n\n`;
+  prompt += `> Adapt your analysis to this proposal type (${proposal.type}). Focus on aspects most relevant to this domain.\n`;
+  prompt += `> You are analyzing a proposal for the project \`${hostCtx.repoSlug}\`, not for the DAO tool itself.\n\n`;
   prompt += `## Description\n${proposal.description}\n`;
   if (proposal.context) {
     prompt += `\n## Additional Context\n${proposal.context}\n`;

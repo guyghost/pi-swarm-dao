@@ -7,6 +7,7 @@ import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState } from "../persistence.js";
 import { getAgent } from "../intelligence/agents.js";
 import { extractAssistantMessage } from "../pi-json.js";
+import { detectHostContext } from "../host-context.js";
 
 /**
  * Execute an approved proposal by delegating to the Delivery Agent
@@ -193,8 +194,13 @@ One line on how to revert.
  */
 const buildExecutionPrompt = (proposal: Proposal, agent: DAOAgent): string => {
   const typeLabel = PROPOSAL_TYPE_LABELS[proposal.type];
+  const hostCtx = detectHostContext();
   let prompt = `# Implementation Plan: ${proposal.title}\n\n`;
-  prompt += `**Category:** ${typeLabel}\n\n`;
+  prompt += `**Category:** ${typeLabel}\n`;
+  prompt += `**Host Project:** ${hostCtx.repoSlug} (${hostCtx.language}${hostCtx.framework ? `, ${hostCtx.framework}` : ""})\n`;
+  prompt += `**Branch:** ${hostCtx.branch}\n`;
+  prompt += `**Root:** ${hostCtx.rootDir}\n\n`;
+  prompt += `> You are producing an implementation plan for project \`${hostCtx.repoSlug}\`, not for the DAO tool itself.\n\n`;
   prompt += `## Scope\n${proposal.description.slice(0, MAX_DESCRIPTION_CHARS)}${proposal.description.length > MAX_DESCRIPTION_CHARS ? "\n\n[…truncated]" : ""}\n\n`;
 
   if (proposal.context) {

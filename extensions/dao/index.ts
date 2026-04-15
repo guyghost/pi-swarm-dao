@@ -31,6 +31,7 @@ import { executeProposal } from "./delivery/execution.js";
 import { getOutcome, initOutcome, addRating, addMetric, markReviewed, generateDashboard } from "./delivery/outcomes.js";
 import { captureSnapshot, updateSnapshotFiles, getSnapshot, performDryRun, performRollback } from "./delivery/dry-run.js";
 import { generatePR, findExistingPR } from "./delivery/pr-generator.js";
+import { detectHostContext, formatHostContext, buildAgentHostContext } from "./host-context.js";
 
 // Round Table
 import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
@@ -144,6 +145,18 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n\nAvailable proposal types: product-feature (✨), security-change (🔒), technical-change (⚙️), release-change (📦), governance-change (📜).`;
     daoContext += `\nEach type has per-type quorum thresholds and maps to a council (product-council, security-council, delivery-council, governance-council).`;
     daoContext += `\nRisk zones: 🟢 Green (auto-approve), 🟠 Orange (council review), 🔴 Red (formal vote + security).`;
+
+    // Inject host project context so the agent knows WHERE it's running
+    const hostCtx = detectHostContext();
+    daoContext += `\n\n## Host Project Context`;
+    daoContext += `\n- **Project:** ${hostCtx.repoSlug}`;
+    daoContext += `\n- **Root:** ${hostCtx.rootDir}`;
+    daoContext += `\n- **Branch:** ${hostCtx.branch}`;
+    daoContext += `\n- **Language:** ${hostCtx.language}`;
+    if (hostCtx.framework) daoContext += `\n- **Framework:** ${hostCtx.framework}`;
+    if (hostCtx.packageManager) daoContext += `\n- **Package Manager:** ${hostCtx.packageManager}`;
+    if (hostCtx.isSelfRepo) daoContext += `\n- ⚠️ Running inside pi-swarm-dao's own repository`;
+    daoContext += `\n- Proposals and executions target this project, not the DAO extension itself.`;
 
     return {
       systemPrompt: event.systemPrompt + daoContext,

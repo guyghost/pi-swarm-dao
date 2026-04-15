@@ -14,6 +14,7 @@ import type { DAOAgent, ProposalType } from "../types.js";
 import { PROPOSAL_TYPES } from "../types.js";
 import { getState } from "../persistence.js";
 import { extractAssistantMessage } from "../pi-json.js";
+import { detectHostContext } from "../host-context.js";
 
 /** Max chars for a round table suggestion (prevents oversized output). */
 const MAX_SUGGESTION_CHARS = 2_000;
@@ -73,14 +74,15 @@ const parseSuggestion = (raw: string): RoundTableSuggestion["parsed"] => {
 
 /** Build the round table prompt for an agent. */
 const buildRoundTablePrompt = (agent: DAOAgent): string => {
+  const hostCtx = detectHostContext();
   return `# Round Table — What Should We Work On Next?
 
 You are in a round table with ${agent.role ? `your role being "${agent.role}"` : "other specialized agents"}.
 Each agent is asked to suggest ONE concrete proposal idea.
 
 ## Context
-The pi-swarm-dao project is a multi-agent DAO governance extension for the Pi coding agent.
-It currently has ${getState().agents.length} agents, ${getState().proposals.length} proposals, and uses GitHub Issues for persistence.
+The DAO is running inside project \`${hostCtx.repoSlug}\` (${hostCtx.language}${hostCtx.framework ? `, ${hostCtx.framework}` : ""} — branch \`${hostCtx.branch}\`).
+It currently has ${getState().agents.length} agents, ${getState().proposals.length} proposals, and uses GitHub Issues for persistence.${hostCtx.isSelfRepo ? "\n⚠️ The DAO is running inside its own repository (pi-swarm-dao). Proposals should improve the DAO extension itself." : `\nProposals should target the host project (${hostCtx.repoSlug}), not the DAO extension.`}
 
 Recent activity:
 ${getState().proposals.slice(-3).map(p => `- #${p.id}: ${p.title} (${p.status})`).join("\n") || "- No proposals yet"}

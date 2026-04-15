@@ -224,6 +224,21 @@ export interface DryRunResult {
   canProceed: boolean;
 }
 
+// ── Host Project Context ──────────────────────────────────────
+
+/** Information about the project where the DAO extension is running */
+export interface HostProjectContext {
+  rootDir: string;
+  repoName: string;
+  repoOwner: string;
+  repoSlug: string;
+  branch: string;
+  language: string;
+  framework: string;
+  packageManager: string;
+  isSelfRepo: boolean;
+}
+
 // ── Outcome Tracking (Proposal #6) ───────────────────────────
 
 /** Rating for a proposal outcome (post-execution) */
@@ -529,6 +544,8 @@ export interface DAOState {
   outcomes: Record<number, ProposalOutcome>;
   // Dry-Run & Rollback (Proposal #8)
   snapshots: Record<number, ExecutionSnapshot>;
+  // Host project context (detected at runtime)
+  hostContext?: HostProjectContext;
 }
 
 /** Result of a vote tally */
