@@ -225,9 +225,13 @@ export const ghCreateProposal = (proposal: Proposal): number | null => {
   return null;
 };
 
+/** Terminal states — proposal is done, issue should be closed. */
+const TERMINAL_STATES = new Set(["executed", "rejected", "failed"]);
+
 /**
  * Update the GitHub Issue when proposal status changes.
  * Updates labels to reflect new status.
+ * Closes the issue on terminal states (executed, rejected, failed).
  */
 export const ghUpdateStatus = (proposal: Proposal): void => {
   const issueNumber = issueMap.get(proposal.id);
@@ -247,6 +251,14 @@ export const ghUpdateStatus = (proposal: Proposal): void => {
     String(issueNumber),
     "--add-label", labels.join(","),
   );
+
+  // Close the issue on terminal states
+  if (TERMINAL_STATES.has(proposal.status)) {
+    const reason = proposal.status === "executed" ? "completed"
+      : proposal.status === "rejected" ? "not planned"
+      : "not planned";
+    gh("issue", "close", String(issueNumber), "--reason", reason);
+  }
 };
 
 /**
