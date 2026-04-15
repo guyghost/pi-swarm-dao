@@ -1,21 +1,22 @@
 // ============================================================
 // pi-swarm-dao — Round Table: Each agent proposes an idea
 // ============================================================
-// During a round table, every agent suggests a proposal idea
-// from their unique perspective. The human then picks which
-// ideas to formally propose and deliberate on.
+// During a round table, every agent suggests a proposal idea.
+// Suggestions are automatically parsed and converted into
+// formal DAO proposals (open status) ready for deliberation.
 // ============================================================
 
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { DAOAgent } from "../types.js";
+import type { DAOAgent, ProposalType } from "../types.js";
+import { PROPOSAL_TYPES } from "../types.js";
 import { getState } from "../persistence.js";
 import { extractAssistantMessage } from "../pi-json.js";
 
 /** Max chars for a round table suggestion (prevents oversized output). */
-const MAX_SUGGESTION_CHARS = 1_500;
+const MAX_SUGGESTION_CHARS = 2_000;
 
 /** Result of a single agent's round table suggestion. */
 export interface RoundTableSuggestion {
@@ -24,9 +25,51 @@ export interface RoundTableSuggestion {
   role: string;
   weight: number;
   suggestion: string;
+  /** Parsed fields from the agent's output. */
+  parsed?: {
+    title: string;
+    type: ProposalType;
+    description: string;
+  };
   error?: string;
   durationMs: number;
 }
+
+// ── Parsing ──────────────────────────────────────────────────
+
+/** Parse an agent's structured output into title, type, description. */
+const parseSuggestion = (raw: string): RoundTableSuggestion["parsed"] => {
+  // Extract title
+  const titleMatch = raw.match(/###\s*Title\s*\n\s*(.+)/i)
+    ?? raw.match(/\*\*Title:\*\*\s*(.+)/i)
+    ?? raw.match(/^#\s+(.+)/m);
+  const title = titleMatch?.[1]?.trim() ?? "";
+
+  // Extract type
+  const typeMatch = raw.match(
+    /###\s*Type\s*\n\s*(product-feature|security-change|technical-change|release-change|governance-change)/i
+  ) ?? raw.match(
+    /\*\*Type:\*\*\s*(product-feature|security-change|technical-change|release-change|governance-change)/i
+  );
+  const type = (typeMatch?.[1]?.trim() ?? "technical-change") as ProposalType;
+
+  // Validate type
+  const validType = PROPOSAL_TYPES.includes(type) ? type : "technical-change";
+
+  // Build description from the full suggestion (it's already structured)
+  let description = raw.trim();
+
+  // If title was found, the description is the full text (it has problem/solution/why now)
+  if (!title) return undefined;
+
+  return {
+    title,
+    type: validType,
+    description,
+  };
+};
+
+// ── Prompt Building ──────────────────────────────────────────
 
 /** Build the round table prompt for an agent. */
 const buildRoundTablePrompt = (agent: DAOAgent): string => {
@@ -70,6 +113,8 @@ Be specific: include a title, a brief description of the problem and solution, a
 - Max 150 words`;
 };
 
+// ── Agent Execution ──────────────────────────────────────────
+
 /** Run a single agent for round table suggestions. */
 const runRoundTableAgent = async (
   agent: DAOAgent,
@@ -110,7 +155,7 @@ const runRoundTableAgent = async (
       proc.stdout.on("data", (data: Buffer) => stdoutChunks.push(data));
       proc.stderr.on("data", (data: Buffer) => stderrChunks.push(data));
 
-      const timeoutMs = 90_000; // 90s — shorter than deliberation
+      const timeoutMs = 90_000;
       let timedOut = false;
       let killing = false;
       let killTimerId: ReturnType<typeof setTimeout> | undefined;
@@ -157,12 +202,16 @@ const runRoundTableAgent = async (
           return;
         }
 
+        const raw = content ? content.slice(0, MAX_SUGGESTION_CHARS) : "(no suggestion)";
+        const parsed = parseSuggestion(raw);
+
         resolve({
           agentId: agent.id,
           agentName: agent.name,
           role: agent.role,
           weight: agent.weight,
-          suggestion: content ? content.slice(0, MAX_SUGGESTION_CHARS) : "(no suggestion)",
+          suggestion: raw,
+          parsed,
           durationMs: Date.now() - startTime,
         });
       });
@@ -186,6 +235,8 @@ const runRoundTableAgent = async (
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 };
+
+// ── Public API ───────────────────────────────────────────────
 
 /**
  * Run a round table — every agent suggests one proposal idea.
@@ -225,28 +276,49 @@ export const runRoundTable = async (
 
 /**
  * Format round table results for display.
+ * Shows suggestions and indicates which became proposals.
  */
-export const formatRoundTable = (suggestions: RoundTableSuggestion[]): string => {
-  let output = `# 🗣️ Round Table — Agent Suggestions\n\n`;
-  output += `> Each agent was asked: "What should we work on next?"\n\n`;
+export const formatRoundTable = (
+  suggestions: RoundTableSuggestion[],
+  proposalIds: Map<string, number>
+): string => {
+  let output = `# 🗣️ Round Table — ${suggestions.filter(s => s.parsed).length}/${suggestions.length} idées transformées en propositions\n\n`;
+  output += `> Chaque agent a proposé une idée → automatiquement convertie en proposition DAO\n\n`;
 
   for (const s of suggestions) {
-    const icon = s.error ? "⚠️" : "💡";
-    output += `## ${icon} ${s.agentName} (weight: ${s.weight})\n`;
-    output += `*${s.role}* · ${(s.durationMs / 1000).toFixed(1)}s`;
-    if (s.error) output += ` · **Error:** ${s.error}`;
-    output += `\n\n${s.suggestion}\n\n---\n\n`;
+    const proposalId = proposalIds.get(s.agentId);
+    const statusIcon = s.error ? "⚠️" : proposalId ? "📋" : "💡";
+    const proposalNote = proposalId ? ` → **Proposal #${proposalId}**` : "";
+    const errorNote = s.error ? ` · **Error:** ${s.error}` : "";
+
+    output += `## ${statusIcon} ${s.agentName} (weight: ${s.weight})${proposalNote}\n`;
+    output += `*${s.role}* · ${(s.durationMs / 1000).toFixed(1)}s${errorNote}\n\n`;
+
+    if (s.parsed) {
+      output += `**${s.parsed.title}** · ${s.parsed.type}\n\n`;
+      // Show just the key sections, not the full raw output
+      const problemMatch = s.suggestion.match(/###\s*Problem\s*\n([\s\S]*?)(?=\n###|$)/i);
+      const solutionMatch = s.suggestion.match(/###\s*Solution\s*\n([\s\S]*?)(?=\n###|$)/i);
+      const whyMatch = s.suggestion.match(/###\s*Why Now\s*\n([\s\S]*?)(?=\n###|$)/i);
+
+      if (problemMatch) output += `**Problem:** ${problemMatch[1].trim()}\n\n`;
+      if (solutionMatch) output += `**Solution:** ${solutionMatch[1].trim()}\n\n`;
+      if (whyMatch) output += `**Why Now:** ${whyMatch[1].trim()}\n\n`;
+    } else if (s.suggestion) {
+      output += `${s.suggestion.slice(0, 300)}\n\n`;
+    }
+
+    output += `---\n\n`;
   }
 
-  output += `## 🎯 Next Steps\n\n`;
-  output += `Pick the ideas you want to formally propose:\n\n`;
-  output += "```";
-  output += `\n dao_propose(`;
-  output += `\n   title: "Your chosen title",`;
-  output += `\n   type: "technical-change",`;
-  output += `\n   description: "Adapted from [Agent Name]'s suggestion: ..."`;
-  output += `\n )`;
-  output += "\n```";
+  const createdIds = Array.from(proposalIds.values());
+  if (createdIds.length > 0) {
+    output += `## 🎯 Prêt pour la délibération\n\n`;
+    output += `Les propositions sont créées et en attente. Lancez la délibération :\n\n`;
+    for (const id of createdIds) {
+      output += `- \`dao_deliberate(proposalId: ${id})\` — Proposal #${id}\n`;
+    }
+  }
 
   return output;
 };

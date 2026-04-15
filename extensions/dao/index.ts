@@ -1442,7 +1442,36 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       try {
         const suggestions = await runRoundTable(state.agents);
-        const formatted = formatRoundTable(suggestions);
+
+        // Auto-create proposals from parsed suggestions
+        const proposalIds = new Map<string, number>();
+        for (const s of suggestions) {
+          if (s.parsed) {
+            const proposal = createProposal(
+              s.parsed.title,
+              s.parsed.type,
+              s.parsed.description,
+              s.agentId,
+              `Suggested by ${s.agentName} during round table`
+            );
+            const zone = classifyRiskZone(proposal);
+            proposal.riskZone = zone;
+            proposalIds.set(s.agentId, proposal.id);
+
+            recordAudit(
+              proposal.id,
+              "governance",
+              "proposal_created",
+              s.agentId,
+              `Proposal "${s.parsed.title}" created from round table suggestion by ${s.agentName}`,
+            );
+
+            // Persist to GitHub
+            ghCreateProposal(proposal);
+          }
+        }
+
+        const formatted = formatRoundTable(suggestions, proposalIds);
 
         pi.sendMessage({
           customType: "dao-roundtable-results",
@@ -1467,11 +1496,11 @@ export default function daoExtension(pi: ExtensionAPI) {
     name: "dao_roundtable",
     label: "DAO Round Table",
     description:
-      "Ask every DAO agent to suggest one proposal idea. Returns a list of suggestions from each agent's perspective. The human can then pick ideas to formally propose.",
+      "Ask every DAO agent to suggest one proposal idea. Suggestions are automatically converted into formal DAO proposals (open status) ready for deliberation.",
     parameters: Type.Object({
       topic: Type.Optional(Type.String({ description: "Optional topic to focus agent suggestions (e.g., 'UX improvements', 'security')" })),
     }),
-    promptSnippet: "dao_roundtable — Ask every agent to suggest a proposal idea",
+    promptSnippet: "dao_roundtable — Agents suggest ideas that become proposals automatically",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = getState();
       if (!state.initialized) {
@@ -1479,20 +1508,48 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const agents = state.agents;
-      const topicNote = params.topic ? `\n\n**Focused topic:** ${params.topic}` : "";
 
       const suggestions = await runRoundTable(agents);
-      const formatted = formatRoundTable(suggestions);
+
+      // Auto-create proposals from parsed suggestions
+      const proposalIds = new Map<string, number>();
+      for (const s of suggestions) {
+        if (s.parsed) {
+          const proposal = createProposal(
+            s.parsed.title,
+            s.parsed.type,
+            s.parsed.description,
+            s.agentId,
+            `Suggested by ${s.agentName} during round table`
+          );
+          const zone = classifyRiskZone(proposal);
+          proposal.riskZone = zone;
+          proposalIds.set(s.agentId, proposal.id);
+
+          recordAudit(
+            proposal.id,
+            "governance",
+            "proposal_created",
+            s.agentId,
+            `Proposal "${s.parsed.title}" created from round table suggestion by ${s.agentName}`,
+          );
+
+          // Persist to GitHub
+          ghCreateProposal(proposal);
+        }
+      }
+
+      const formatted = formatRoundTable(suggestions, proposalIds);
 
       recordAudit(
         0,
         "intelligence",
         "roundtable_completed",
         "system",
-        `Round table completed: ${suggestions.length} suggestions from ${suggestions.filter(s => !s.error).length} agents`,
+        `Round table completed: ${suggestions.length} suggestions, ${proposalIds.size} proposals created`,
       );
 
-      return toolResult(formatted + topicNote);
+      return toolResult(formatted);
     },
   });
 }
