@@ -200,6 +200,11 @@ export const getIssueNumber = (proposalId: number): number | undefined => {
  * Called when a proposal is created via dao_propose.
  */
 export const ghCreateProposal = (proposal: Proposal): number | null => {
+  // Skip if this proposal already has a GitHub issue
+  if (issueMap.has(proposal.id)) {
+    return issueMap.get(proposal.id)!;
+  }
+
   const body = buildProposalBody(proposal);
   const labels = buildLabels(proposal);
 
