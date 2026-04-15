@@ -282,10 +282,16 @@ export const runRoundTable = async (
  */
 export const formatRoundTable = (
   suggestions: RoundTableSuggestion[],
-  proposalIds: Map<string, number>
+  proposalIds: Map<string, number>,
+  proposalTitles?: Map<number, string>,
+  hostProject?: string
 ): string => {
   let output = `# 🗣️ Round Table — ${suggestions.filter(s => s.parsed).length}/${suggestions.length} idées transformées en propositions\n\n`;
   output += `> Chaque agent a proposé une idée → automatiquement convertie en proposition DAO\n\n`;
+
+  if (hostProject) {
+    output += `> 📁 **Projet cible:** \`${hostProject}\`\n\n`;
+  }
 
   for (const s of suggestions) {
     const proposalId = proposalIds.get(s.agentId);
@@ -318,7 +324,8 @@ export const formatRoundTable = (
     output += `## 🎯 Prêt pour la délibération\n\n`;
     output += `Les propositions sont créées et en attente. Lancez la délibération :\n\n`;
     for (const id of createdIds) {
-      output += `- \`dao_deliberate(proposalId: ${id})\` — Proposal #${id}\n`;
+      const title = proposalTitles?.get(id) ?? `Proposal #${id}`;
+      output += `- \`dao_deliberate(proposalId: ${id})\` — ${title}\n`;
     }
   }
 

@@ -1723,6 +1723,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
         // Auto-create proposals from parsed suggestions
         const proposalIds = new Map<string, number>();
+        const proposalTitles = new Map<number, string>();
         for (const s of suggestions) {
           if (s.parsed) {
             const proposal = createProposal(
@@ -1735,6 +1736,7 @@ export default function daoExtension(pi: ExtensionAPI) {
             const zone = classifyRiskZone(proposal);
             proposal.riskZone = zone;
             proposalIds.set(s.agentId, proposal.id);
+            proposalTitles.set(proposal.id, proposal.title);
 
             recordAudit(
               proposal.id,
@@ -1749,7 +1751,8 @@ export default function daoExtension(pi: ExtensionAPI) {
           }
         }
 
-        const formatted = formatRoundTable(suggestions, proposalIds);
+        const hostCtx = detectHostContext();
+        const formatted = formatRoundTable(suggestions, proposalIds, proposalTitles, hostCtx.repoSlug);
 
         pi.sendMessage({
           customType: "dao-roundtable-results",
@@ -1809,6 +1812,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // Auto-create proposals from parsed suggestions
       const proposalIds = new Map<string, number>();
+      const proposalTitles = new Map<number, string>();
       for (const s of suggestions) {
         if (s.parsed) {
           const proposal = createProposal(
@@ -1821,6 +1825,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           const zone = classifyRiskZone(proposal);
           proposal.riskZone = zone;
           proposalIds.set(s.agentId, proposal.id);
+          proposalTitles.set(proposal.id, proposal.title);
 
           recordAudit(
             proposal.id,
@@ -1835,7 +1840,8 @@ export default function daoExtension(pi: ExtensionAPI) {
         }
       }
 
-      const formatted = formatRoundTable(suggestions, proposalIds);
+      const hostCtx = detectHostContext();
+      const formatted = formatRoundTable(suggestions, proposalIds, proposalTitles, hostCtx.repoSlug);
 
       recordAudit(
         0,
