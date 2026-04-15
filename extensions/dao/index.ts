@@ -30,6 +30,7 @@ import { synthesize } from "./intelligence/synthesis.js";
 import { executeProposal } from "./delivery/execution.js";
 import { getOutcome, initOutcome, addRating, addMetric, markReviewed, generateDashboard } from "./delivery/outcomes.js";
 import { captureSnapshot, updateSnapshotFiles, getSnapshot, performDryRun, performRollback } from "./delivery/dry-run.js";
+import { generatePR, findExistingPR } from "./delivery/pr-generator.js";
 
 // Round Table
 import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
@@ -133,6 +134,7 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- \`dao_dashboard\` → view outcome tracking dashboard`;
     daoContext += `\n- \`dao_dry_run\` → preview execution without applying changes`;
     daoContext += `\n- \`dao_rollback\` → revert proposal to pre-execution snapshot`;
+    daoContext += `\n- \`dao_pr\` → generate draft PR from executed proposals`;
     daoContext += `\n\n**Self-Amending Tools:**`;
     daoContext += `\n- \`dao_propose_amendment\` → propose changes to DAO agents, config, quorum, gates, or councils`;
     daoContext += `\n- \`dao_update_agent\` → shortcut to propose agent property changes (creates governance-change proposal)`;
@@ -2026,6 +2028,83 @@ export default function daoExtension(pi: ExtensionAPI) {
         `# ${icon} Rollback — #${params.proposalId}: ${proposal.title}\n\n` +
         `${result.message}`
       );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_pr (Proposal #11 — Auto PR Generation)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_pr",
+    label: "DAO Generate PR",
+    description:
+      "Generate a draft pull request from an executed proposal. Creates a feature branch, writes scaffolding files, commits, and opens a draft PR linked to the proposal issue.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the executed proposal to generate a PR for" }),
+    }),
+    promptSnippet: "dao_pr — Generate a draft PR from an executed proposal",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "executed" && proposal.status !== "controlled" && proposal.status !== "approved") {
+        return toolResult(
+          `Proposal #${proposal.id} has status "${proposal.status}". Only executed/approved/controlled proposals can generate PRs.`
+        );
+      }
+
+      // Check for existing PR
+      const existing = findExistingPR(params.proposalId);
+      if (existing) {
+        return toolResult(
+          `# ℹ️ PR Already Exists — #${params.proposalId}: ${proposal.title}\n\n` +
+          `**PR #${existing.number}:** ${existing.url}\n` +
+          `**State:** ${existing.state}\n\n` +
+          `Use the existing PR or close it first.`
+        );
+      }
+
+      try {
+        const result = generatePR(proposal);
+
+        recordAudit(
+          params.proposalId,
+          "delivery",
+          "pr_generated",
+          "system",
+          `Draft PR #${result.prNumber} generated: ${result.prUrl}`,
+        );
+
+        return toolResult(
+          `# 🔀 Draft PR Generated — #${params.proposalId}: ${proposal.title}\n\n` +
+          `| Detail | Value |\n` +
+          `|--------|-------|\n` +
+          `| PR | #${result.prNumber} |\n` +
+          `| URL | ${result.prUrl} |\n` +
+          `| Branch | \`${result.branch}\` |\n` +
+          `| Commit | \`${result.commitSha}\` |\n` +
+          `| Files | ${result.filesCreated.length} |\n\n` +
+          `**Files Created:**\n${result.filesCreated.map(f => `- \`${f}\``).join("\n")}\n\n` +
+          `---\n\nThe PR is in **draft** mode. Review the scaffolding, implement the feature, then mark ready for review.`
+        );
+      } catch (err: any) {
+        recordAudit(
+          params.proposalId,
+          "delivery",
+          "pr_generation_failed",
+          "system",
+          `PR generation failed: ${err.message}`,
+        );
+
+        return toolResult(
+          `# ❌ PR Generation Failed — #${params.proposalId}: ${proposal.title}\n\n` +
+          `**Error:** ${err.message}\n\n` +
+          `Check git status and gh authentication. You may need to commit or stash changes first.`
+        );
+      }
     },
   });
 }
