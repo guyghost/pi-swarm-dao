@@ -92,6 +92,8 @@ export function createStateSnapshot(): { daoState: DAOState } {
     controlResults: { ...currentState.controlResults },
     deliveryPlans: { ...currentState.deliveryPlans },
     artefacts: { ...currentState.artefacts },
+    outcomes: { ...currentState.outcomes },
+    snapshots: { ...currentState.snapshots },
   };
   return { daoState: snapshot };
 }
@@ -183,6 +185,16 @@ export function restoreState(ctx: any): void {
       if (!a.councils) {
         a.councils = [];
       }
+    }
+
+    // Migrate state missing outcomes (Proposal #6)
+    if (!currentState.outcomes) {
+      currentState.outcomes = {};
+    }
+
+    // Migrate state missing snapshots (Proposal #8)
+    if (!currentState.snapshots) {
+      currentState.snapshots = {};
     }
   }
 

@@ -272,6 +272,18 @@ export interface ProposalOutcome {
 
 // ── Acceptance Criteria (Given/When/Then) ──────────────────────
 
+/** RICE Score — Reach × Impact × Confidence / Effort */
+export interface RICEScore {
+  reach: number;       // users affected per quarter (raw number)
+  impact: number;     // 1-10 scale (1=minimal, 3=low, 5=medium, 7=high, 10=massive)
+  confidence: number; // percentage 0-100
+  effort: number;     // person-weeks (1 = 1 week)
+  riceScore: number;  // computed: reach × impact × (confidence/100) / effort
+  rank?: number;      // position when sorted against other proposals
+}
+
+// ── Acceptance Criteria (Given/When/Then) ──────────────────────
+
 /** A structured acceptance criterion in Given/When/Then format */
 export interface AcceptanceCriterion {
   id: string;            // e.g. "AC-1"
@@ -449,6 +461,8 @@ export interface Proposal {
   // Risk & Scoring
   riskZone?: RiskZone;
   compositeScore?: CompositeScore;
+  // RICE Scoring (Proposal #5)
+  riceScore?: RICEScore;
 
   // Pipeline
   stage: PipelineStage;

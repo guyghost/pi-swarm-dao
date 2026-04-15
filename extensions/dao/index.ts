@@ -16,7 +16,7 @@ import {
 } from "./governance/proposals.js";
 import { parseVoteFromOutput, tallyVotes, formatTallyResult } from "./governance/voting.js";
 import { assertTransition, statusLabel } from "./governance/lifecycle.js";
-import { calculateCompositeScore, parseScoresFromOutput, applyMalus, formatCompositeScore } from "./governance/scoring.js";
+import { calculateCompositeScore, parseScoresFromOutput, applyMalus, formatCompositeScore, calculateRICEScore, parseRICEFromOutput, rankByRICE, formatRICEScore } from "./governance/scoring.js";
 import { classifyRiskZone, formatZoneClassification } from "./governance/zones.js";
 import { validateAmendmentPayload, previewAmendment, executeAmendment, rollbackAmendment } from "./governance/amendments.js";
 import { validateCouncilApproval, formatCouncilInfo } from "./governance/councils.js";
@@ -838,6 +838,13 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       storeCompositeScore(proposal.id, compositeScore);
 
+      // Compute and store RICE score (Proposal #5)
+      const riceScore = parseRICEFromOutput(proposal);
+      if (riceScore) {
+        proposal.riceScore = riceScore;
+        getState(); // trigger state update
+      }
+
       // Update proposal status based on tally
       const newStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
       assertTransition("deliberating", newStatus);
@@ -1576,6 +1583,10 @@ export default function daoExtension(pi: ExtensionAPI) {
           }
           storeCompositeScore(proposal.id, compositeScore);
 
+          // Compute and store RICE score (Proposal #5)
+          const riceScore = parseRICEFromOutput(proposal);
+          if (riceScore) proposal.riceScore = riceScore;
+
           // Determine outcome
           const newStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
           updateProposalStatus(proposal.id, newStatus);
@@ -1811,10 +1822,10 @@ export default function daoExtension(pi: ExtensionAPI) {
         proposal = openProposals[0];
       }
 
-      if (proposal.status !== "open") {
+      if (proposal.status !== "open" && proposal.status !== "controlled") {
         pi.sendMessage({
           customType: "dao-error",
-          content: `Proposal #${proposal.id} "${proposal.title}" has status **${proposal.status}**. Only open proposals can be shipped.`,
+          content: `Proposal #${proposal.id} "${proposal.title}" has status **${proposal.status}**. Only open or controlled proposals can be shipped.`,
           display: true,
         });
         return;
@@ -1839,102 +1850,117 @@ export default function daoExtension(pi: ExtensionAPI) {
       };
 
       try {
+        // Variables to track pipeline results
+        let tallyResult: any = null;
+        let compositeScoreResult: any = null;
+        let controlResultValue: any = null;
+        const skipDeliberate = proposal.status !== "open";
+        const skipCheck = proposal.status === "controlled";
+
         // ── STEP 1: DELIBERATE ───────────────────────────────────
-        reportProgress("Deliberate", "Starting swarm deliberation...");
+        if (!skipDeliberate) {
+          reportProgress("Deliberate", "Starting swarm deliberation...");
 
-        updateProposalStatus(proposal.id, "deliberating");
-        ghUpdateStatus(proposal);
-        recordAudit(proposal.id, "governance", "deliberation_started", "user",
-          `Ship pipeline: deliberation started on proposal #${proposal.id}: ${proposal.title}`);
+          updateProposalStatus(proposal.id, "deliberating");
+          ghUpdateStatus(proposal);
+          recordAudit(proposal.id, "governance", "deliberation_started", "user",
+            `Ship pipeline: deliberation started on proposal #${proposal.id}: ${proposal.title}`);
 
-        const agentOutputs = await dispatchSwarm(proposal, state.agents);
+          const agentOutputs = await dispatchSwarm(proposal, state.agents);
 
-        const votes = agentOutputs.map((output) => {
-          const agent = state.agents.find((a) => a.id === output.agentId);
-          const weight = agent?.weight ?? 1;
-          if (output.content) {
-            const parsed = parseVoteFromOutput(output.agentId, output.agentName, weight, output.content);
-            if (parsed.position !== "abstain" || parsed.reasoning !== "No vote section found in agent output") {
-              return parsed;
+          const votes = agentOutputs.map((output) => {
+            const agent = state.agents.find((a) => a.id === output.agentId);
+            const weight = agent?.weight ?? 1;
+            if (output.content) {
+              const parsed = parseVoteFromOutput(output.agentId, output.agentName, weight, output.content);
+              if (parsed.position !== "abstain" || parsed.reasoning !== "No vote section found in agent output") {
+                return parsed;
+              }
             }
-          }
-          return { agentId: output.agentId, agentName: output.agentName, position: "abstain" as const, reasoning: output.error ?? "No output produced", weight };
-        });
-
-        const synthesis = synthesize(agentOutputs, votes);
-        storeDeliberationResults(proposal.id, agentOutputs, synthesis, votes);
-
-        const tally = tallyVotes(proposal.id, votes, proposal.type);
-        const axisScores = parseScoresFromOutput(proposal);
-        let compositeScore = calculateCompositeScore(axisScores);
-        if (proposal.content) {
-          compositeScore = applyMalus(compositeScore, proposal.content.permissionsImpact, proposal.content.dataImpact);
-        }
-        storeCompositeScore(proposal.id, compositeScore);
-
-        const deliberationStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
-        updateProposalStatus(proposal.id, deliberationStatus);
-        if (deliberationStatus === "approved") {
-          proposal.riskZone = classifyRiskZone(proposal);
-        }
-
-        ghUpdateStatus(proposal);
-        ghAddDeliberation(proposal, agentOutputs, {
-          weightedFor: tally.weightedFor, weightedAgainst: tally.weightedAgainst,
-          totalVotingWeight: tally.totalVotingWeight, votingAgents: tally.votingAgents,
-          totalAgents: tally.totalAgents, quorumMet: tally.quorumMet, approvalScore: tally.approvalScore,
-        }, Date.now() - Date.now());
-
-        recordAudit(proposal.id, "intelligence", "deliberation_completed", "system",
-          `Ship pipeline: ${deliberationStatus} (${tally.weightedFor}/${tally.totalVotingWeight} for, score ${compositeScore.weighted}/100)`);
-
-        if (deliberationStatus === "rejected") {
-          pi.sendMessage({
-            customType: "dao-ship-result",
-            content:
-              `# 🚢 Ship Pipeline — Stopped at Deliberation\n\n` +
-              `**Proposal #${proposal.id}:** ${proposal.title}\n` +
-              `**Projet:** ${hostCtx.repoSlug}\n\n` +
-              `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ❌ Rejected |\n| 🛡️ Check | ⏭️ Skipped |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
-              `**Votes:** ${tally.weightedFor}/${tally.totalVotingWeight} weighted for (${Math.round(tally.approvalScore)}%)\n` +
-              `**Quorum:** ${tally.quorumMet ? "✅ Met" : "❌ Not met"}\n\n` +
-              `> The swarm voted against this proposal. Review the votes and refine the proposal.`,
-            display: true,
+            return { agentId: output.agentId, agentName: output.agentName, position: "abstain" as const, reasoning: output.error ?? "No output produced", weight };
           });
-          return;
+
+          const synthesis = synthesize(agentOutputs, votes);
+          storeDeliberationResults(proposal.id, agentOutputs, synthesis, votes);
+
+          tallyResult = tallyVotes(proposal.id, votes, proposal.type);
+          const axisScores = parseScoresFromOutput(proposal);
+          compositeScoreResult = calculateCompositeScore(axisScores);
+          if (proposal.content) {
+            compositeScoreResult = applyMalus(compositeScoreResult, proposal.content.permissionsImpact, proposal.content.dataImpact);
+          }
+          storeCompositeScore(proposal.id, compositeScoreResult);
+
+          // Compute and store RICE score (Proposal #5)
+          const riceScore = parseRICEFromOutput(proposal);
+          if (riceScore) proposal.riceScore = riceScore;
+
+          const deliberationStatus: "approved" | "rejected" = tallyResult.approved ? "approved" : "rejected";
+          updateProposalStatus(proposal.id, deliberationStatus);
+          if (deliberationStatus === "approved") {
+            proposal.riskZone = classifyRiskZone(proposal);
+          }
+
+          ghUpdateStatus(proposal);
+          ghAddDeliberation(proposal, agentOutputs, {
+            weightedFor: tallyResult.weightedFor, weightedAgainst: tallyResult.weightedAgainst,
+            totalVotingWeight: tallyResult.totalVotingWeight, votingAgents: tallyResult.votingAgents,
+            totalAgents: tallyResult.totalAgents, quorumMet: tallyResult.quorumMet, approvalScore: tallyResult.approvalScore,
+          }, Date.now() - Date.now());
+
+          recordAudit(proposal.id, "intelligence", "deliberation_completed", "system",
+            `Ship pipeline: ${deliberationStatus} (${tallyResult.weightedFor}/${tallyResult.totalVotingWeight} for, score ${compositeScoreResult.weighted}/100)`);
+
+          if (deliberationStatus === "rejected") {
+            pi.sendMessage({
+              customType: "dao-ship-result",
+              content:
+                `# 🚢 Ship Pipeline — Stopped at Deliberation\n\n` +
+                `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+                `**Projet:** ${hostCtx.repoSlug}\n\n` +
+                `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ❌ Rejected |\n| 🛡️ Check | ⏭️ Skipped |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
+                `**Votes:** ${tallyResult.weightedFor}/${tallyResult.totalVotingWeight} weighted for (${Math.round(tallyResult.approvalScore)}%)\n` +
+                `**Quorum:** ${tallyResult.quorumMet ? "✅ Met" : "❌ Not met"}\n\n` +
+                `> The swarm voted against this proposal. Review the votes and refine the proposal.`,
+              display: true,
+            });
+            return;
+          }
         }
 
         // ── STEP 2: CHECK (Control Gates) ───────────────────────
-        reportProgress("Check", "Running control gates...");
+        if (!skipCheck) {
+          reportProgress("Check", "Running control gates...");
 
-        const controlResult = runGates(proposal);
-        const checklist = generateChecklist(proposal);
-        controlResult.checklist = checklist;
+          controlResultValue = runGates(proposal);
+          const checklist = generateChecklist(proposal);
+          controlResultValue.checklist = checklist;
 
-        if (controlResult.allGatesPassed) {
-          assertTransition(proposal.status, "controlled");
-          updateProposalStatus(proposal.id, "controlled");
-        }
+          if (controlResultValue.allGatesPassed) {
+            assertTransition(proposal.status, "controlled");
+            updateProposalStatus(proposal.id, "controlled");
+          }
 
-        ghAddControlResult(proposal, controlResult);
-        recordAudit(proposal.id, "control", controlResult.allGatesPassed ? "gates_passed" : "gates_failed", "system",
-          `Ship pipeline: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings`);
+          ghAddControlResult(proposal, controlResultValue);
+          recordAudit(proposal.id, "control", controlResultValue.allGatesPassed ? "gates_passed" : "gates_failed", "system",
+            `Ship pipeline: ${controlResultValue.blockerCount} blockers, ${controlResultValue.warningCount} warnings`);
 
-        if (!controlResult.allGatesPassed) {
-          const failedGates = controlResult.gates.filter(g => !g.passed && g.severity === "blocker");
-          pi.sendMessage({
-            customType: "dao-ship-result",
-            content:
-              `# 🚢 Ship Pipeline — Stopped at Control Gates\n\n` +
-              `**Proposal #${proposal.id}:** ${proposal.title}\n` +
-              `**Projet:** ${hostCtx.repoSlug}\n\n` +
-              `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ✅ Approved (${Math.round(tally.approvalScore)}%) |\n| 🛡️ Check | ❌ ${controlResult.blockerCount} blocker(s) |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
-              `### Failed Gates\n` +
-              failedGates.map(g => `- ❌ **${g.name}:** ${g.message}`).join("\n") + "\n\n" +
-              `> Resolve blockers and re-run \`/dao:ship ${proposal.id}\`.`,
-            display: true,
-          });
-          return;
+          if (!controlResultValue.allGatesPassed) {
+            const failedGates = controlResultValue.gates.filter((g: any) => !g.passed && g.severity === "blocker");
+            pi.sendMessage({
+              customType: "dao-ship-result",
+              content:
+                `# 🚢 Ship Pipeline — Stopped at Control Gates\n\n` +
+                `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+                `**Projet:** ${hostCtx.repoSlug}\n\n` +
+                `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ✅ ${tallyResult ? `Approved (${Math.round(tallyResult.approvalScore)}%)` : "Already approved"} |\n| 🛡️ Check | ❌ ${controlResultValue.blockerCount} blocker(s) |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
+                `### Failed Gates\n` +
+                failedGates.map((g: any) => `- ❌ **${g.name}:** ${g.message}`).join("\n") + "\n\n" +
+                `> Resolve blockers and re-run \`/dao:ship ${proposal.id}\`.`,
+              display: true,
+            });
+            return;
+          }
         }
 
         // ── STEP 3: EXECUTE ──────────────────────────────────────
@@ -1952,6 +1978,13 @@ export default function daoExtension(pi: ExtensionAPI) {
           `Ship pipeline: execution completed for proposal #${proposal.id}`);
 
         // ── SUCCESS ──────────────────────────────────────────────
+        const deliberationDetail = tallyResult
+          ? `${Math.round(tallyResult.approvalScore)}% approval, score ${compositeScoreResult.weighted}/100`
+          : "Previously deliberated";
+        const checkDetail = controlResultValue
+          ? `${controlResultValue.warningCount} warning(s)`
+          : "Previously passed";
+
         pi.sendMessage({
           customType: "dao-ship-result",
           content:
@@ -1959,8 +1992,8 @@ export default function daoExtension(pi: ExtensionAPI) {
             `**Proposal #${proposal.id}:** ${proposal.title}\n` +
             `**Projet:** ${hostCtx.repoSlug}\n\n` +
             `| Étape | Statut | Détail |\n|-------|--------|--------|\n` +
-            `| 🗳️ Deliberate | ✅ Approved | ${Math.round(tally.approvalScore)}% approval, score ${compositeScore.weighted}/100 |\n` +
-            `| 🛡️ Check | ✅ All gates passed | ${controlResult.warningCount} warning(s) |\n` +
+            `| 🗳️ Deliberate | ✅ Approved | ${deliberationDetail} |\n` +
+            `| 🛡️ Check | ✅ All gates passed | ${checkDetail} |\n` +
             `| 🚀 Execute | ✅ Done | Delivery plan generated |\n\n` +
             `### Execution Output\n${executionResult.slice(0, 1000)}${executionResult.length > 1000 ? "\n\n[…truncated]" : ""}\n\n` +
             `---\n\n` +

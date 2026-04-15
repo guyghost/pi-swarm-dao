@@ -1,18 +1,19 @@
 // ============================================================
-// pi-swarm-dao — Composite Scoring Engine
+// pi-swarm-dao — Composite Scoring Engine (RICE + Custom Axes)
 // ============================================================
-// Weighted scoring on 100 points:
-//   User Impact:     30%  (higher is better)
-//   Business Impact: 20%  (higher is better)
-//   Effort:          15%  (lower effort = higher score, inverted)
-//   Security Risk:   20%  (lower risk = higher score, inverted)
-//   Confidence:      15%  (higher is better)
+// Two scoring systems:
 //
-// Final: Σ(axis × weight) → 0-100
-// Malus: -15 if sensitive permissions, -10 if data access expanded
+// 1. RICE Framework (Proposal #5):
+//    Reach × Impact × Confidence / Effort
+//    Industry-standard prioritization scoring
+//
+// 2. Custom Composite (original):
+//    Weighted scoring on 100 points:
+//    User Impact: 30%, Business Impact: 20%, Effort: 15% (inv),
+//    Security Risk: 20% (inv), Confidence: 15%
 // ============================================================
 
-import type { AxisScore, CompositeScore, RiskZone, ProposalContent, Proposal } from "../types.js";
+import type { AxisScore, CompositeScore, RiskZone, ProposalContent, Proposal, RICEScore } from "../types.js";
 import { SCORING_WEIGHTS } from "../types.js";
 
 /**
@@ -236,3 +237,135 @@ export const formatCompositeScore = (score: CompositeScore): string => {
   ];
   return lines.join("\n");
 };
+
+// ============================================================
+// RICE Scoring Framework (Proposal #5)
+// ============================================================
+
+/**
+ * Calculate RICE score: Reach × Impact × Confidence / Effort
+ *
+ * - Reach: number of users affected per quarter
+ * - Impact: 1-10 (1=minimal, 3=low, 5=medium, 7=high, 10=massive)
+ * - Confidence: percentage (0-100) — how confident in estimates
+ * - Effort: person-weeks (1 = 1 week of work)
+ *
+ * Higher RICE score = higher priority.
+ */
+export const calculateRICEScore = (
+  reach: number,
+  impact: number,
+  confidence: number,
+  effort: number,
+): RICEScore => {
+  // Clamp inputs
+  const r = Math.max(1, reach);
+  const i = Math.max(1, Math.min(10, impact));
+  const c = Math.max(1, Math.min(100, confidence));
+  const e = Math.max(0.5, effort); // avoid division by zero, min 0.5 week
+
+  const riceScore = Math.round((r * i * (c / 100)) / e);
+
+  return {
+    reach: r,
+    impact: i,
+    confidence: c,
+    effort: e,
+    riceScore,
+  };
+};
+
+/**
+ * Parse RICE estimates from agent outputs.
+ * The Prioritization Agent is the primary source.
+ */
+export const parseRICEFromOutput = (proposal: Proposal): RICEScore | null => {
+  const prioritizer = proposal.agentOutputs.find(o => o.agentId === "prioritizer");
+  if (!prioritizer || prioritizer.error) return null;
+
+  const text = prioritizer.content;
+
+  // Try structured RICE section first
+  const riceSection = text.match(/###?\s*RICE[^\n]*\n([\s\S]*?)(?=\n###|$)/i);
+  const source = riceSection ? riceSection[1] : text;
+
+  const reachMatch = source.match(/(?:Reach|Utilisateurs?)\s*[:=]??\s*(\d[\d,]*)/i);
+  const impactMatch = source.match(/(?:Impact)\s*[:=]??\s*(\d+(?:\.\d+)?)/i);
+  const confidenceMatch = source.match(/(?:Confidence|Confiance)\s*[:=]??\s*(\d+)%?/i);
+  const effortMatch = source.match(/(?:Effort|Durée|Effort)\s*[:=]??\s*(\d+(?:\.\d+)?)\s*(?:week|semaine|person|w)?/i);
+
+  if (!reachMatch || !impactMatch) return null;
+
+  const reach = parseInt(reachMatch[1].replace(/,/g, ""), 10);
+  const impact = parseFloat(impactMatch[1]);
+  const confidence = confidenceMatch ? parseFloat(confidenceMatch[1]) : 70; // default 70%
+  const effort = effortMatch ? parseFloat(effortMatch[1]) : estimateEffortWeeks(proposal);
+
+  return calculateRICEScore(reach, impact, confidence, effort);
+};
+
+/**
+ * Estimate effort in person-weeks from proposal content.
+ */
+const estimateEffortWeeks = (proposal: Proposal): number => {
+  const content = proposal.content;
+  const effortStr = content?.estimatedEffort?.toLowerCase() ?? "";
+
+  if (/hour|heure/i.test(effortStr)) return 0.5;
+  if (/1-?2\s*day|quelques\s*jour/i.test(effortStr)) return 0.5;
+  if (/day|jour/i.test(effortStr)) return 1;
+  if (/week|semaine/i.test(effortStr)) {
+    const match = effortStr.match(/(\d+)/);
+    return match ? parseInt(match[1], 10) : 2;
+  }
+  if (/month|mois|sprint/i.test(effortStr)) return 4;
+  if (content?.dependencies?.length) return 1 + content.dependencies.length * 0.5;
+  return 2; // default: 2 weeks
+};
+
+/**
+ * Rank proposals by RICE score.
+ * Sets the `rank` field on each RICEScore.
+ */
+export const rankByRICE = (proposals: Proposal[]): Proposal[] => {
+  const withRICE = proposals.filter(p => p.riceScore);
+
+  // Sort by RICE score descending
+  withRICE.sort((a, b) => b.riceScore!.riceScore - a.riceScore!.riceScore);
+
+  // Assign ranks
+  withRICE.forEach((p, idx) => {
+    p.riceScore!.rank = idx + 1;
+  });
+
+  return withRICE;
+};
+
+/**
+ * Format a RICE score as readable markdown.
+ */
+export const formatRICEScore = (rice: RICEScore): string => {
+  const lines = [
+    `## 📊 RICE Score: ${rice.riceScore}${rice.rank ? ` (Rank #${rice.rank})` : ""}`,
+    "",
+    "| Component | Value | Description |",
+    "|-----------|-------|-------------|",
+    `| Reach | ${rice.reach.toLocaleString()} | Users affected per quarter |`,
+    `| Impact | ${rice.impact}/10 | ${impactLabel(rice.impact)} |`,
+    `| Confidence | ${rice.confidence}% | ${rice.confidence >= 80 ? "High" : rice.confidence >= 50 ? "Medium" : "Low"} certainty |`,
+    `| Effort | ${rice.effort} week${rice.effort !== 1 ? "s" : ""} | Person-weeks |`,
+    "",
+    `**Formula:** ${rice.reach.toLocaleString()} × ${rice.impact} × (${rice.confidence}/100) / ${rice.effort} = **${rice.riceScore.toLocaleString()}**`,
+  ];
+  return lines.join("\n");
+};
+
+/** Human-readable impact label */
+const impactLabel = (impact: number): string => {
+  if (impact >= 9) return "Massive";
+  if (impact >= 7) return "High";
+  if (impact >= 5) return "Medium";
+  if (impact >= 3) return "Low";
+  return "Minimal";
+};
+
