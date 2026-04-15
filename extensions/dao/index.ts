@@ -28,6 +28,13 @@ import { synthesize } from "./intelligence/synthesis.js";
 
 // Layer 3: Delivery
 import { executeProposal } from "./delivery/execution.js";
+
+// GitHub Issues Persistence
+import {
+  ghCreateProposal, ghUpdateStatus, ghAddDeliberation,
+  ghAddControlResult, ghAddExecution, ghAddArtefacts,
+  ghAddPlan, ghRestoreState, getIssueNumber,
+} from "./github-persistence.js";
 import { parseDeliveryPlan, storePlan, getPlan, formatPlan } from "./delivery/plan.js";
 import {
   generateAllArtefacts,
@@ -57,10 +64,12 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     restoreState(ctx);
+    ghRestoreState(); // Restore proposal → issue mapping
   });
 
   pi.on("session_tree", async (_event, ctx) => {
     restoreState(ctx);
+    ghRestoreState();
   });
 
   // ================================================================
@@ -658,6 +667,10 @@ export default function daoExtension(pi: ExtensionAPI) {
         `Proposal "${params.title}" created via dao_propose tool`,
       );
 
+      // GitHub Issue — persist proposal
+      const ghIssue = ghCreateProposal(proposal);
+      const ghNote = ghIssue ? `\n**GitHub Issue:** #${ghIssue}` : "";
+
       const zoneLabel = zone === "red" ? "🔴 Red" : zone === "orange" ? "🟠 Orange" : "🟢 Green";
       const typeLabel = PROPOSAL_TYPE_LABELS[params.type as ProposalType];
 
@@ -670,7 +683,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         `**Stage:** intake\n\n` +
         `## Description\n${params.description}\n` +
         (params.context ? `\n\n## Context\n${params.context}` : "") +
-        `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
+        `${ghNote}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
       );
     },
   });
@@ -817,6 +830,17 @@ export default function daoExtension(pi: ExtensionAPI) {
         { durationMs, tally: { approved: tally.approved, weightedFor: tally.weightedFor, totalVotingWeight: tally.totalVotingWeight } },
       );
 
+      // GitHub Issue — persist deliberation votes and synthesis
+      ghAddDeliberation(proposal, agentOutputs, {
+        weightedFor: tally.weightedFor,
+        weightedAgainst: tally.weightedAgainst,
+        totalVotingWeight: tally.totalVotingWeight,
+        votingAgents: tally.votingAgents,
+        totalAgents: tally.totalAgents,
+        quorumMet: tally.quorumMet,
+        approvalScore: tally.approvalScore,
+      }, durationMs);
+
       // Format results
       const tallyFormatted = formatTallyResult(tally, proposal.type);
       const scoreFormatted = formatCompositeScore(compositeScore);
@@ -891,8 +915,10 @@ export default function daoExtension(pi: ExtensionAPI) {
         controlResult.allGatesPassed ? "gates_passed" : "gates_failed",
         "system",
         `Control check: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings, ${stats.checked}/${stats.total} checklist items`,
-        { allGatesPassed: controlResult.allGatesPassed },
       );
+
+      // GitHub Issue — persist control gate results
+      ghAddControlResult(proposal, controlResult);
 
       // Format results
       const gatesFormatted = renderControlResult(controlResult);
@@ -961,6 +987,9 @@ export default function daoExtension(pi: ExtensionAPI) {
         "system",
         `Delivery plan generated: ${plan.phases.length} phases, ${plan.phases.reduce((s, p) => s + p.tasks.length, 0)} tasks, estimated ${plan.estimatedDuration}`,
       );
+
+      // GitHub Issue — persist delivery plan
+      ghAddPlan(proposal, formatPlan(plan));
 
       return toolResult(
         formatPlan(plan) +
@@ -1031,6 +1060,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           `Execution completed successfully for proposal #${proposal.id}`,
         );
 
+        // GitHub Issue — persist execution result
+        ghAddExecution(proposal, result);
+
         return toolResult(
           `# 🚀 Execution Complete — #${proposal.id}: ${proposal.title}\n\n` +
           `**Status:** ✅ Executed\n\n` +
@@ -1047,6 +1079,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           "system",
           `Execution failed: ${err.message}`,
         );
+
+        // GitHub Issue — persist failure
+        ghAddExecution(proposal, `⚠️ Execution Failed: ${err.message}`);
 
         return toolResult(
           `# ⚠️ Execution Failed — #${proposal.id}: ${proposal.title}\n\n` +
@@ -1109,6 +1144,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           "system",
           `Generated 7 artefacts for proposal #${proposal.id}`,
         );
+
+        // GitHub Issue — persist artefacts summary
+        ghAddArtefacts(proposal, 7);
       }
 
       // Return specific artefact or all
