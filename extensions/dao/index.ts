@@ -29,6 +29,9 @@ import { synthesize } from "./intelligence/synthesis.js";
 // Layer 3: Delivery
 import { executeProposal } from "./delivery/execution.js";
 
+// Round Table
+import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
+
 // GitHub Issues Persistence
 import {
   ghCreateProposal, ghUpdateStatus, ghAddDeliberation,
@@ -1407,6 +1410,89 @@ export default function daoExtension(pi: ExtensionAPI) {
         content: trail,
         display: true,
       });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao-roundtable
+  // ================================================================
+
+  pi.registerCommand("dao-roundtable", {
+    description: "Ask every agent to suggest a proposal idea (round table)",
+    async handler(_args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🗣️ Round table starting — ${state.agents.length} agents...`, "info");
+      }
+
+      pi.sendMessage({
+        customType: "dao-roundtable-start",
+        content: `# 🗣️ Round Table Starting...\n\nAsking ${state.agents.length} agents to suggest ideas. This takes ~30-60s.`,
+        display: true,
+      });
+
+      try {
+        const suggestions = await runRoundTable(state.agents);
+        const formatted = formatRoundTable(suggestions);
+
+        pi.sendMessage({
+          customType: "dao-roundtable-results",
+          content: formatted,
+          display: true,
+        });
+      } catch (err: any) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Round table failed: ${err.message}`,
+          display: true,
+        });
+      }
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_roundtable
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_roundtable",
+    label: "DAO Round Table",
+    description:
+      "Ask every DAO agent to suggest one proposal idea. Returns a list of suggestions from each agent's perspective. The human can then pick ideas to formally propose.",
+    parameters: Type.Object({
+      topic: Type.Optional(Type.String({ description: "Optional topic to focus agent suggestions (e.g., 'UX improvements', 'security')" })),
+    }),
+    promptSnippet: "dao_roundtable — Ask every agent to suggest a proposal idea",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      const agents = state.agents;
+      const topicNote = params.topic ? `\n\n**Focused topic:** ${params.topic}` : "";
+
+      const suggestions = await runRoundTable(agents);
+      const formatted = formatRoundTable(suggestions);
+
+      recordAudit(
+        0,
+        "intelligence",
+        "roundtable_completed",
+        "system",
+        `Round table completed: ${suggestions.length} suggestions from ${suggestions.filter(s => !s.error).length} agents`,
+      );
+
+      return toolResult(formatted + topicNote);
     },
   });
 }
