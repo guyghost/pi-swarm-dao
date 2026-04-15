@@ -36,7 +36,7 @@ import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
 import {
   ghCreateProposal, ghUpdateStatus, ghAddDeliberation,
   ghAddControlResult, ghAddExecution, ghAddArtefacts,
-  ghAddPlan, ghRestoreState, getIssueNumber,
+  ghAddPlan, ghRestoreState, getIssueNumber, ghCloseImplemented,
 } from "./github-persistence.js";
 import { parseDeliveryPlan, storePlan, getPlan, formatPlan } from "./delivery/plan.js";
 import {
@@ -1550,6 +1550,75 @@ export default function daoExtension(pi: ExtensionAPI) {
       );
 
       return toolResult(formatted);
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_close
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_close",
+    label: "DAO Close Proposal",
+    description:
+      "Close a GitHub issue after implementing a proposal. Posts an implementation summary with commits, files changed, and test results, then closes the issue as completed. Only use after the actual code has been pushed.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to close" }),
+      commits: Type.Array(Type.String(), { description: "List of commit SHAs that implemented the proposal" }),
+      filesChanged: Type.Array(Type.String(), { description: "List of files created or modified" }),
+      testsPassed: Type.Number({ description: "Number of tests passing" }),
+      branch: Type.Optional(Type.String({ description: "Feature branch name" })),
+    }),
+    promptSnippet: "dao_close — Close proposal issue after implementation",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "executed") {
+        return toolResult(
+          `Proposal #${proposal.id} has status "${proposal.status}". Only executed proposals can be closed after implementation. Run the full pipeline (deliberate → check → execute) first.`
+        );
+      }
+
+      // Close the GitHub issue with implementation summary
+      ghCloseImplemented(proposal, {
+        commits: params.commits,
+        filesChanged: params.filesChanged,
+        testsPassed: params.testsPassed,
+        branch: params.branch,
+      });
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "issue_closed",
+        "user",
+        `GitHub issue closed after implementation: ${params.commits.length} commits, ${params.filesChanged.length} files, ${params.testsPassed} tests passing`,
+      );
+
+      const issueNumber = getIssueNumber(proposal.id);
+      const issueNote = issueNumber ? ` (GitHub Issue #${issueNumber})` : "";
+
+      return toolResult(
+        `# ✅ Proposal #${proposal.id} Closed${issueNote}\n\n` +
+        `**Title:** ${proposal.title}\n\n` +
+        `### Implementation Summary\n\n` +
+        `| Detail | Value |\n` +
+        `|--------|-------|\n` +
+        `| Commits | ${params.commits.length} |\n` +
+        `| Files changed | ${params.filesChanged.length} |\n` +
+`| Tests passing | ${params.testsPassed} |\n` +
+        `| Branch | ${params.branch ?? "main"} |\n\n` +
+        `**Commits:**\n${params.commits.map(c => `- \`${c}\``).join("\n")}\n\n` +
+        `GitHub issue closed as completed.`
+      );
     },
   });
 }

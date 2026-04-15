@@ -230,13 +230,15 @@ export const ghCreateProposal = (proposal: Proposal): number | null => {
   return null;
 };
 
-/** Terminal states — proposal is done, issue should be closed. */
-const TERMINAL_STATES = new Set(["executed", "rejected", "failed"]);
+/** States that auto-close the issue (rejection/failure — no implementation expected). */
+const AUTO_CLOSE_STATES = new Set(["rejected", "failed"]);
 
 /**
  * Update the GitHub Issue when proposal status changes.
  * Updates labels to reflect new status.
- * Closes the issue on terminal states (executed, rejected, failed).
+ * Auto-closes on rejected/failed (no implementation expected).
+ * Executed proposals stay open until ghCloseImplemented() is called
+ * after the actual code implementation is pushed.
  */
 export const ghUpdateStatus = (proposal: Proposal): void => {
   const issueNumber = issueMap.get(proposal.id);
@@ -248,7 +250,7 @@ export const ghUpdateStatus = (proposal: Proposal): void => {
   gh(
     "issue", "edit",
     String(issueNumber),
-    "--remove-label", "dao-status:open,dao-status:approved,dao-status:controlled,dao-status:rejected,dao-status:executed,dao-status:failed",
+    "--remove-label", "dao-status:open,dao-status:approved,dao-status:controlled,dao-status:rejected,dao-status:executed,dao-status:failed,dao-status:implemented",
   );
 
   gh(
@@ -257,12 +259,9 @@ export const ghUpdateStatus = (proposal: Proposal): void => {
     "--add-label", labels.join(","),
   );
 
-  // Close the issue on terminal states
-  if (TERMINAL_STATES.has(proposal.status)) {
-    const reason = proposal.status === "executed" ? "completed"
-      : proposal.status === "rejected" ? "not planned"
-      : "not planned";
-    gh("issue", "close", String(issueNumber), "--reason", reason);
+  // Auto-close only on rejected/failed (no implementation expected)
+  if (AUTO_CLOSE_STATES.has(proposal.status)) {
+    gh("issue", "close", String(issueNumber), "--reason", "not planned");
   }
 };
 
@@ -406,4 +405,68 @@ export const ghRestoreState = (): Map<number, number> => {
   } catch {
     return issueMap;
   }
+};
+
+/**
+ * Close a GitHub issue after the actual code implementation is done.
+ * Posts an implementation summary comment with commits, files changed,
+ * and then closes the issue as completed.
+ *
+ * This should be called AFTER the developer has pushed the implementation.
+ */
+export const ghCloseImplemented = (
+  proposal: Proposal,
+  implementationSummary: {
+    commits: string[];      // e.g. ["2b255fa", "f9fe459"]
+    filesChanged: string[]; // e.g. ["core/states.ts", "shell/hooks.ts"]
+    testsPassed: number;    // e.g. 42
+    branch?: string;        // e.g. "feat/state-machine"
+  }
+): void => {
+  const issueNumber = issueMap.get(proposal.id);
+  if (!issueNumber) return;
+
+  // Build implementation summary comment
+  let body = `## ✅ Implemented & Delivered\n\n`;
+  body += `The proposal has been fully implemented and merged.\n\n`;
+
+  body += `### Commits\n`;
+  for (const commit of implementationSummary.commits) {
+    body += `- \`${commit}\`\n`;
+  }
+  body += `\n`;
+
+  body += `### Files Changed\n`;
+  for (const file of implementationSummary.filesChanged) {
+    body += `- \`${file}\`\n`;
+  }
+  body += `\n`;
+
+  body += `### Tests\n`;
+  body += `**${implementationSummary.testsPassed} tests passing**\n\n`;
+
+  if (implementationSummary.branch) {
+    body += `**Branch:** \`${implementationSummary.branch}\`\n\n`;
+  }
+
+  body += `---\n`;
+  body += `*Proposal #${proposal.id} · Closed after implementation · ${new Date().toISOString().split("T")[0]}*`;
+
+  // Post implementation summary
+  gh("issue", "comment", String(issueNumber), "--body", body);
+
+  // Update labels: remove executed, add implemented
+  gh(
+    "issue", "edit",
+    String(issueNumber),
+    "--remove-label", "dao-status:executed",
+  );
+  gh(
+    "issue", "edit",
+    String(issueNumber),
+    "--add-label", "dao-status:implemented",
+  );
+
+  // Close the issue as completed
+  gh("issue", "close", String(issueNumber), "--reason", "completed");
 };
