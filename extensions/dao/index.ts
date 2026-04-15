@@ -1414,6 +1414,183 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // COMMAND: /dao-deliberate
+  // ================================================================
+
+  pi.registerCommand("dao-deliberate", {
+    description: "Deliberate on open proposals. Pass a proposal ID to deliberate only that one.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      // Parse optional proposal ID from args
+      const trimmed = args.trim();
+      const numericId = parseInt(trimmed, 10);
+
+      // Gather proposals to deliberate
+      let targets;
+      if (trimmed && !isNaN(numericId)) {
+        const p = getProposal(numericId);
+        if (!p) {
+          pi.sendMessage({
+            customType: "dao-error",
+            content: `Proposal #${numericId} not found.`,
+            display: true,
+          });
+          return;
+        }
+        if (p.status !== "open") {
+          pi.sendMessage({
+            customType: "dao-error",
+            content: `Proposal #${p.id} \"${p.title}\" has status **${p.status}**. Only open proposals can be deliberated.`,
+            display: true,
+          });
+          return;
+        }
+        targets = [p];
+      } else {
+        targets = listProposals().filter((p) => p.status === "open");
+        if (targets.length === 0) {
+          pi.sendMessage({
+            customType: "dao-info",
+            content: "No open proposals to deliberate on. Use `/dao-roundtable` to generate new ones.",
+            display: true,
+          });
+          return;
+        }
+      }
+
+      const label = targets.length === 1
+        ? `Proposal #${targets[0].id}: ${targets[0].title}`
+        : `${targets.length} open proposals`;
+
+      pi.sendMessage({
+        customType: "dao-deliberate-start",
+        content: `# 🗳️ Deliberation Starting\n\n${label} will be deliberated by ${state.agents.length} agents.\n\n${targets.map((p) => `- **#${p.id}** ${p.title} (${p.type})`).join("\\n")}`,
+        display: true,
+      });
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🗳️ Deliberating on ${label}...`, "info");
+      }
+
+      // Sequential deliberation
+      const results: Array<{
+        proposal: typeof targets[0];
+        tally: any;
+        compositeScore: any;
+        synthesis: string;
+        durationMs: number;
+        error?: string;
+      }> = [];
+
+      for (const proposal of targets) {
+        const startTime = Date.now();
+        try {
+          // Transition to deliberating
+          updateProposalStatus(proposal.id, "deliberating");
+          ghUpdateStatus(proposal);
+          recordAudit(proposal.id, "governance", "deliberation_started", "user",
+            `Deliberation started via /dao-deliberate on proposal #${proposal.id}: ${proposal.title}`);
+
+          // Dispatch swarm
+          const agentOutputs = await dispatchSwarm(proposal, state.agents);
+
+          // Parse votes
+          const votes = agentOutputs.map((output) => {
+            const agent = state.agents.find((a) => a.id === output.agentId);
+            const weight = agent?.weight ?? 1;
+            if (output.content) {
+              const parsed = parseVoteFromOutput(output.agentId, output.agentName, weight, output.content);
+              if (parsed.position !== "abstain" || parsed.reasoning !== "No vote section found in agent output") {
+                return parsed;
+              }
+            }
+            return { agentId: output.agentId, agentName: output.agentName, position: "abstain" as const, reasoning: output.error ?? "No output produced", weight };
+          });
+
+          // Synthesize
+          const synthesis = synthesize(agentOutputs, votes);
+          storeDeliberationResults(proposal.id, agentOutputs, synthesis, votes);
+
+          // Tally
+          const tally = tallyVotes(proposal.id, votes, proposal.type);
+
+          // Composite score
+          const axisScores = parseScoresFromOutput(proposal);
+          let compositeScore = calculateCompositeScore(axisScores);
+          if (proposal.content) {
+            compositeScore = applyMalus(compositeScore, proposal.content.permissionsImpact, proposal.content.dataImpact);
+          }
+          storeCompositeScore(proposal.id, compositeScore);
+
+          // Determine outcome
+          const newStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
+          updateProposalStatus(proposal.id, newStatus);
+          if (newStatus === "approved") {
+            proposal.riskZone = classifyRiskZone(proposal);
+          }
+
+          ghUpdateStatus(proposal);
+          ghAddDeliberation(proposal, agentOutputs, {
+            weightedFor: tally.weightedFor, weightedAgainst: tally.weightedAgainst,
+            totalVotingWeight: tally.totalVotingWeight, votingAgents: tally.votingAgents,
+            totalAgents: tally.totalAgents, quorumMet: tally.quorumMet, approvalScore: tally.approvalScore,
+          }, Date.now() - startTime);
+
+          recordAudit(proposal.id, "intelligence", "deliberation_completed", "system",
+            `Deliberation completed: ${newStatus} (${tally.weightedFor}/${tally.totalVotingWeight} weighted for, score ${compositeScore.weighted}/100)`);
+
+          results.push({ proposal, tally, compositeScore, synthesis, durationMs: Date.now() - startTime });
+        } catch (err: any) {
+          updateProposalStatus(proposal.id, "open");
+          ghUpdateStatus(proposal);
+          results.push({ proposal, tally: null, compositeScore: null, synthesis: "", durationMs: Date.now() - startTime, error: err.message });
+        }
+      }
+
+      // Format results
+      const lines: string[] = ["# 🗳️ Deliberation Results\\n"];
+      for (const r of results) {
+        if (r.error) {
+          lines.push(`## ❌ #${r.proposal.id} ${r.proposal.title}\\n`);
+          lines.push(`**Error:** ${r.error}\\n`);
+        } else {
+          const emoji = r.proposal.status === "approved" ? "✅ Approved" : "❌ Rejected";
+          lines.push(`## ${emoji} — #${r.proposal.id} ${r.proposal.title}\\n`);
+          lines.push(`| Metric | Value |`);
+          lines.push(`|--------|-------|`);
+          lines.push(`| Score | ${r.compositeScore?.weighted ?? "?"}/100 |`);
+          lines.push(`| Votes | ${r.tally.weightedFor}/${r.tally.totalVotingWeight} weighted for |`);
+          lines.push(`| Quorum | ${r.tally.quorumMet ? "✅ Met" : "❌ Not met"} |`);
+          lines.push(`| Approval | ${Math.round(r.tally.approvalScore)}% |`);
+          lines.push(`| Duration | ${(r.durationMs / 1000).toFixed(1)}s |`);
+          const firstLine = r.synthesis.split("\\n")[0];
+          if (firstLine) lines.push(`\\n> ${firstLine}\\n`);
+        }
+      }
+      const approved = results.filter((r) => r.proposal.status === "approved").length;
+      const rejected = results.filter((r) => r.proposal.status === "rejected").length;
+      const failed = results.filter((r) => r.error).length;
+      lines.push(`---\\n**Summary:** ${approved} approved, ${rejected} rejected${failed ? `, ${failed} failed` : ""} out of ${results.length} proposals.`);
+      if (approved > 0) lines.push(`\\nUse \`/dao-check <id>\` to run control gates on approved proposals.`);
+
+      pi.sendMessage({
+        customType: "dao-deliberate-results",
+        content: lines.join("\\n"),
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
   // COMMAND: /dao-roundtable
   // ================================================================
 
