@@ -906,7 +906,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposalId: Type.Number({ description: "ID of the proposal to check" }),
     }),
     promptSnippet: "dao_check — Run control gates on an approved proposal",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
@@ -916,6 +916,13 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult(
           `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`
         );
+      }
+
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🛡️ Running control gates on proposal #${proposal.id}: ${proposal.title}...` }],
+          details: {},
+        });
       }
 
       // Run all gates
@@ -974,7 +981,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposalId: Type.Number({ description: "ID of the proposal to plan" }),
     }),
     promptSnippet: "dao_plan — Generate structured delivery plan",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
@@ -993,6 +1000,13 @@ export default function daoExtension(pi: ExtensionAPI) {
           formatPlan(existingPlan) +
           `\n\n---\n\nRun \`dao_execute\` with proposalId ${proposal.id} to execute, or \`dao_artefacts\` to view generated artefacts.`
         );
+      }
+
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🗂️ Generating delivery plan for proposal #${proposal.id}: ${proposal.title}...` }],
+          details: {},
+        });
       }
 
       // Parse delivery plan from the delivery agent's output
@@ -1137,7 +1151,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       )),
     }),
     promptSnippet: "dao_artefacts — View auto-generated artefacts (Decision Brief, ADR, Risk Report, PRD, Plan, Tests, Release)",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const state = getState();
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
@@ -1156,6 +1170,12 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Generate artefacts if not yet cached
       let artefacts = state.artefacts[proposal.id];
       if (!artefacts) {
+        if (onUpdate) {
+          onUpdate({
+            content: [{ type: "text" as const, text: `📚 Generating artefacts for proposal #${proposal.id}...` }],
+            details: {},
+          });
+        }
         // Need tally for decision brief
         const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
         const controlResult = state.controlResults[proposal.id];
@@ -1759,7 +1779,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       topic: Type.Optional(Type.String({ description: "Optional topic to focus agent suggestions (e.g., 'UX improvements', 'security')" })),
     }),
     promptSnippet: "dao_roundtable — Agents suggest ideas that become proposals automatically",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const state = getState();
       if (!state.initialized) {
         return toolResult("DAO not initialized. Run `dao_setup` first.");
@@ -1767,7 +1787,25 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const agents = state.agents;
 
-      const suggestions = await runRoundTable(agents);
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🗣️ Round table starting — ${agents.length} agents suggesting ideas...` }],
+          details: {},
+        });
+      }
+
+      const suggestions = await runRoundTable(
+        agents,
+        undefined,
+        (completed, total, agentName) => {
+          if (onUpdate) {
+            onUpdate({
+              content: [{ type: "text" as const, text: `🗣️ ${completed}/${total} — ${agentName} responded` }],
+              details: {},
+            });
+          }
+        },
+      );
 
       // Auto-create proposals from parsed suggestions
       const proposalIds = new Map<string, number>();
@@ -1961,7 +1999,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposalId: Type.Number({ description: "ID of the proposal to dry-run" }),
     }),
     promptSnippet: "dao_dry_run — Preview execution without applying changes",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
@@ -1974,6 +2012,13 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       // Capture snapshot before anything happens
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `🧪 Running dry-run on proposal #${params.proposalId}: ${proposal.title}...` }],
+          details: {},
+        });
+      }
+
       const snapshot = captureSnapshot(params.proposalId);
 
       // Use execution result if available, otherwise use proposal description
@@ -2014,10 +2059,17 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposalId: Type.Number({ description: "ID of the proposal to rollback" }),
     }),
     promptSnippet: "dao_rollback — Revert proposal execution to pre-execution snapshot",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (onUpdate) {
+        onUpdate({
+          content: [{ type: "text" as const, text: `⏪ Rolling back proposal #${params.proposalId}: ${proposal.title}...` }],
+          details: {},
+        });
       }
 
       const result = performRollback(params.proposalId);
@@ -2057,7 +2109,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposalId: Type.Number({ description: "ID of the executed proposal to generate a PR for" }),
     }),
     promptSnippet: "dao_pr — Generate a draft PR from an executed proposal",
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
       const proposal = getProposal(params.proposalId);
       if (!proposal) {
         return toolResult(`Proposal #${params.proposalId} not found.`);
@@ -2081,6 +2133,13 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       try {
+        if (onUpdate) {
+          onUpdate({
+            content: [{ type: "text" as const, text: `🔀 Generating draft PR for proposal #${params.proposalId}: ${proposal.title}...` }],
+            details: {},
+          });
+        }
+
         const result = generatePR(proposal);
 
         recordAudit(
