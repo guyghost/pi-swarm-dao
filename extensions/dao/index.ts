@@ -1770,6 +1770,228 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // COMMAND: /dao:ship — Full Pipeline (deliberate → check → execute)
+  // ================================================================
+
+  pi.registerCommand("dao:ship", {
+    description: "Run the full DAO pipeline on a proposal: deliberate → check → execute. Pass a proposal ID or leave empty for first open proposal.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      // Parse proposal ID
+      const trimmed = args.trim();
+      const numericId = parseInt(trimmed, 10);
+      let proposal;
+
+      if (trimmed && !isNaN(numericId)) {
+        proposal = getProposal(numericId);
+        if (!proposal) {
+          pi.sendMessage({ customType: "dao-error", content: `Proposal #${numericId} not found.`, display: true });
+          return;
+        }
+      } else {
+        // Pick the first open proposal
+        const openProposals = listProposals().filter(p => p.status === "open");
+        if (openProposals.length === 0) {
+          pi.sendMessage({
+            customType: "dao-error",
+            content: "No open proposals to ship. Use `/dao-roundtable` to create some.",
+            display: true,
+          });
+          return;
+        }
+        proposal = openProposals[0];
+      }
+
+      if (proposal.status !== "open") {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Proposal #${proposal.id} "${proposal.title}" has status **${proposal.status}**. Only open proposals can be shipped.`,
+          display: true,
+        });
+        return;
+      }
+
+      const hostCtx = detectHostContext();
+      const totalSteps = 3; // deliberate → check → execute
+      let currentStep = 0;
+
+      const reportProgress = (step: string, detail: string) => {
+        currentStep++;
+        pi.sendMessage({
+          customType: "dao-ship-progress",
+          content: `# 🚢 Ship Pipeline — #${proposal!.id}: ${proposal!.title}\n\n` +
+            `**Projet:** ${hostCtx.repoSlug}\n\n` +
+            `| Étape | Statut |\n|-------|--------|\n` +
+            `${currentStep >= 1 ? `| 🗳️ Deliberate | ${currentStep > 1 ? (proposal!.status === "approved" || proposal!.status === "controlled" || proposal!.status === "executed" ? "✅" : "❌") : "⏳ " + detail} |\n` : ""}` +
+            `${currentStep >= 2 ? `| 🛡️ Check | ${currentStep > 2 ? "✅" : "⏳ " + detail} |\n` : ""}` +
+            `${currentStep >= 3 ? `| 🚀 Execute | ${currentStep > 3 ? "✅" : "⏳ " + detail} |\n` : ""}`,
+          display: true,
+        });
+      };
+
+      try {
+        // ── STEP 1: DELIBERATE ───────────────────────────────────
+        reportProgress("Deliberate", "Starting swarm deliberation...");
+
+        updateProposalStatus(proposal.id, "deliberating");
+        ghUpdateStatus(proposal);
+        recordAudit(proposal.id, "governance", "deliberation_started", "user",
+          `Ship pipeline: deliberation started on proposal #${proposal.id}: ${proposal.title}`);
+
+        const agentOutputs = await dispatchSwarm(proposal, state.agents);
+
+        const votes = agentOutputs.map((output) => {
+          const agent = state.agents.find((a) => a.id === output.agentId);
+          const weight = agent?.weight ?? 1;
+          if (output.content) {
+            const parsed = parseVoteFromOutput(output.agentId, output.agentName, weight, output.content);
+            if (parsed.position !== "abstain" || parsed.reasoning !== "No vote section found in agent output") {
+              return parsed;
+            }
+          }
+          return { agentId: output.agentId, agentName: output.agentName, position: "abstain" as const, reasoning: output.error ?? "No output produced", weight };
+        });
+
+        const synthesis = synthesize(agentOutputs, votes);
+        storeDeliberationResults(proposal.id, agentOutputs, synthesis, votes);
+
+        const tally = tallyVotes(proposal.id, votes, proposal.type);
+        const axisScores = parseScoresFromOutput(proposal);
+        let compositeScore = calculateCompositeScore(axisScores);
+        if (proposal.content) {
+          compositeScore = applyMalus(compositeScore, proposal.content.permissionsImpact, proposal.content.dataImpact);
+        }
+        storeCompositeScore(proposal.id, compositeScore);
+
+        const deliberationStatus: "approved" | "rejected" = tally.approved ? "approved" : "rejected";
+        updateProposalStatus(proposal.id, deliberationStatus);
+        if (deliberationStatus === "approved") {
+          proposal.riskZone = classifyRiskZone(proposal);
+        }
+
+        ghUpdateStatus(proposal);
+        ghAddDeliberation(proposal, agentOutputs, {
+          weightedFor: tally.weightedFor, weightedAgainst: tally.weightedAgainst,
+          totalVotingWeight: tally.totalVotingWeight, votingAgents: tally.votingAgents,
+          totalAgents: tally.totalAgents, quorumMet: tally.quorumMet, approvalScore: tally.approvalScore,
+        }, Date.now() - Date.now());
+
+        recordAudit(proposal.id, "intelligence", "deliberation_completed", "system",
+          `Ship pipeline: ${deliberationStatus} (${tally.weightedFor}/${tally.totalVotingWeight} for, score ${compositeScore.weighted}/100)`);
+
+        if (deliberationStatus === "rejected") {
+          pi.sendMessage({
+            customType: "dao-ship-result",
+            content:
+              `# 🚢 Ship Pipeline — Stopped at Deliberation\n\n` +
+              `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+              `**Projet:** ${hostCtx.repoSlug}\n\n` +
+              `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ❌ Rejected |\n| 🛡️ Check | ⏭️ Skipped |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
+              `**Votes:** ${tally.weightedFor}/${tally.totalVotingWeight} weighted for (${Math.round(tally.approvalScore)}%)\n` +
+              `**Quorum:** ${tally.quorumMet ? "✅ Met" : "❌ Not met"}\n\n` +
+              `> The swarm voted against this proposal. Review the votes and refine the proposal.`,
+            display: true,
+          });
+          return;
+        }
+
+        // ── STEP 2: CHECK (Control Gates) ───────────────────────
+        reportProgress("Check", "Running control gates...");
+
+        const controlResult = runGates(proposal);
+        const checklist = generateChecklist(proposal);
+        controlResult.checklist = checklist;
+
+        if (controlResult.allGatesPassed) {
+          assertTransition(proposal.status, "controlled");
+          updateProposalStatus(proposal.id, "controlled");
+        }
+
+        ghAddControlResult(proposal, controlResult);
+        recordAudit(proposal.id, "control", controlResult.allGatesPassed ? "gates_passed" : "gates_failed", "system",
+          `Ship pipeline: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings`);
+
+        if (!controlResult.allGatesPassed) {
+          const failedGates = controlResult.gates.filter(g => !g.passed && g.severity === "blocker");
+          pi.sendMessage({
+            customType: "dao-ship-result",
+            content:
+              `# 🚢 Ship Pipeline — Stopped at Control Gates\n\n` +
+              `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+              `**Projet:** ${hostCtx.repoSlug}\n\n` +
+              `| Étape | Statut |\n|-------|--------|\n| 🗳️ Deliberate | ✅ Approved (${Math.round(tally.approvalScore)}%) |\n| 🛡️ Check | ❌ ${controlResult.blockerCount} blocker(s) |\n| 🚀 Execute | ⏭️ Skipped |\n\n` +
+              `### Failed Gates\n` +
+              failedGates.map(g => `- ❌ **${g.name}:** ${g.message}`).join("\n") + "\n\n" +
+              `> Resolve blockers and re-run \`/dao:ship ${proposal.id}\`.`,
+            display: true,
+          });
+          return;
+        }
+
+        // ── STEP 3: EXECUTE ──────────────────────────────────────
+        reportProgress("Execute", "Executing proposal...");
+
+        captureSnapshot(proposal.id);
+        const executionResult = await executeProposal(proposal, undefined);
+        storeExecutionResult(proposal.id, executionResult);
+
+        updateProposalStatus(proposal.id, "executed");
+        ghUpdateStatus(proposal);
+        ghAddExecution(proposal, executionResult);
+
+        recordAudit(proposal.id, "delivery", "execution_completed", "system",
+          `Ship pipeline: execution completed for proposal #${proposal.id}`);
+
+        // ── SUCCESS ──────────────────────────────────────────────
+        pi.sendMessage({
+          customType: "dao-ship-result",
+          content:
+            `# 🚢 Ship Pipeline — Complete!\n\n` +
+            `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+            `**Projet:** ${hostCtx.repoSlug}\n\n` +
+            `| Étape | Statut | Détail |\n|-------|--------|--------|\n` +
+            `| 🗳️ Deliberate | ✅ Approved | ${Math.round(tally.approvalScore)}% approval, score ${compositeScore.weighted}/100 |\n` +
+            `| 🛡️ Check | ✅ All gates passed | ${controlResult.warningCount} warning(s) |\n` +
+            `| 🚀 Execute | ✅ Done | Delivery plan generated |\n\n` +
+            `### Execution Output\n${executionResult.slice(0, 1000)}${executionResult.length > 1000 ? "\n\n[…truncated]" : ""}\n\n` +
+            `---\n\n` +
+            `Next steps:\n` +
+            `- \`dao_artefacts(${proposal.id})\` — view generated artefacts\n` +
+            `- \`dao_pr(${proposal.id})\` — generate a draft PR\n` +
+            `- \`dao_rate(${proposal.id})\` — rate the outcome`,
+          display: true,
+        });
+
+      } catch (err: any) {
+        // Something went wrong mid-pipeline
+        recordAudit(proposal.id, "delivery", "ship_failed", "system",
+          `Ship pipeline failed: ${err.message}`);
+
+        pi.sendMessage({
+          customType: "dao-ship-result",
+          content:
+            `# 🚢 Ship Pipeline — Error\n\n` +
+            `**Proposal #${proposal.id}:** ${proposal.title}\n` +
+            `**Projet:** ${hostCtx.repoSlug}\n\n` +
+            `Pipeline stopped at step ${currentStep}/${totalSteps}.\n\n` +
+            `**Error:** ${err.message}\n\n` +
+            `> Fix the issue and re-run \`/dao:ship ${proposal.id}\`.`,
+          display: true,
+        });
+      }
+    },
+  });
+
+  // ================================================================
   // TOOL: dao_roundtable
   // ================================================================
 
