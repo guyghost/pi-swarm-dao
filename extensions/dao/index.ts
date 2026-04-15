@@ -59,6 +59,7 @@ import { generateChecklist, formatChecklist, checklistStats } from "./control/ch
 
 // Rendering
 import { renderDashboard, renderDeliberationProgress, renderControlResult, renderHistory, renderAgentOutputSummary, renderAmendmentDiff, renderAmendmentStatus } from "./render.js";
+import { renderPipelineDashboard, renderProposalCard, parseFilterArgs } from "./render-pipeline.js";
 
 export default function daoExtension(pi: ExtensionAPI) {
   // ================================================================
@@ -1585,6 +1586,62 @@ export default function daoExtension(pi: ExtensionAPI) {
       pi.sendMessage({
         customType: "dao-deliberate-results",
         content: lines.join("\\n"),
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao-status
+  // ================================================================
+
+  pi.registerCommand("dao-status", {
+    description: "View the DAO proposal pipeline dashboard. Filters: --stage, --type, --needs-action, --stale",
+    async handler(args: string, _ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      // Check for proposal ID (single proposal view)
+      const trimmed = args.trim();
+      const numericId = parseInt(trimmed.split("\\s+")[0], 10);
+
+      if (trimmed && !isNaN(numericId) && !trimmed.startsWith("--")) {
+        // Single proposal card view
+        const proposal = getProposal(numericId);
+        if (!proposal) {
+          pi.sendMessage({
+            customType: "dao-error",
+            content: `Proposal #${numericId} not found.`,
+            display: true,
+          });
+          return;
+        }
+        pi.sendMessage({
+          customType: "dao-status",
+          content: renderProposalCard(proposal),
+          display: true,
+        });
+        return;
+      }
+
+      // Pipeline dashboard view
+      const filters = parseFilterArgs(trimmed);
+      const content = renderPipelineDashboard(
+        state.proposals,
+        filters,
+        state.config.staleThresholdHours ?? 24,
+      );
+
+      pi.sendMessage({
+        customType: "dao-status",
+        content,
         display: true,
       });
     },

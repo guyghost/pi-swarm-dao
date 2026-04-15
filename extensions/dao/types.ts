@@ -439,6 +439,8 @@ export interface DAOConfig {
   typeQuorum: TypeQuorumMap;
   /** Minimum quorum floor — governance-change can never go below this (default 60%) */
   quorumFloor: number;
+  /** Hours before a proposal is flagged as stale in dashboard (default 24) */
+  staleThresholdHours?: number;
 }
 
 // ── State ────────────────────────────────────────────────────
