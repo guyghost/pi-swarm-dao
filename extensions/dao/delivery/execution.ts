@@ -61,9 +61,8 @@ export async function executeProposal(
       `Task: ${executionPrompt}`,
     ];
 
-    /** Process-level timeout (300s — execution takes longer than deliberation). */
-    const EXECUTION_TIMEOUT_MS = 300_000;
-    /** Grace period after SIGTERM before force-killing with SIGKILL. */
+    /** No process-level timeout — execution (coding) can take arbitrarily long.
+     *  Users can abort via Ctrl+C (AbortSignal from Pi). */
     const SIGKILL_GRACE_MS = 5_000;
 
     return await new Promise<string>((resolve, reject) => {
@@ -88,10 +87,6 @@ export async function executeProposal(
 
       // Track SIGKILL escalation timer so it can be cleared on close/error
       let killTimerId: ReturnType<typeof setTimeout> | undefined;
-      // Track process-level timeout so it can be cleared on close/error
-      let timeoutTimerId: ReturnType<typeof setTimeout> | undefined;
-      // Flag to distinguish timeout from normal exit
-      let timedOut = false;
 
       /** Send SIGTERM, then escalate to SIGKILL after grace period. */
       const escalateKill = () => {
@@ -114,16 +109,9 @@ export async function executeProposal(
         }
       }
 
-      // Process-level timeout: kill if execution exceeds limit
-      timeoutTimerId = setTimeout(() => {
-        timedOut = true;
-        escalateKill();
-      }, EXECUTION_TIMEOUT_MS);
-
       proc.on("close", (code) => {
         // CRITICAL-1: Clear orphaned timers to prevent memory leaks
         if (killTimerId) clearTimeout(killTimerId);
-        if (timeoutTimerId) clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
 
         // Convert buffered chunks to strings
@@ -131,15 +119,6 @@ export async function executeProposal(
         const stderr = Buffer.concat(stderrChunks).toString();
         stdoutChunks.length = 0;
         stderrChunks.length = 0;
-
-        if (timedOut) {
-          reject(
-            new Error(
-              `Execution agent timed out after ${EXECUTION_TIMEOUT_MS / 1000}s`
-            )
-          );
-          return;
-        }
 
         const content = extractAssistantMessage(stdout);
 
@@ -157,7 +136,6 @@ export async function executeProposal(
 
       proc.on("error", (err) => {
         if (killTimerId) clearTimeout(killTimerId);
-        if (timeoutTimerId) clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
         reject(new Error(`Failed to spawn execution agent: ${err.message}`));
       });
