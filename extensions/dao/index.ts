@@ -1907,6 +1907,15 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const reportProgress = (step: string, detail: string) => {
         currentStep++;
+        // Immediate visual feedback via status bar + notification + widget
+        ctx.ui.setStatus("dao-ship", step + ": " + detail);
+        ctx.ui.notify(step + ": " + detail, "info");
+        ctx.ui.setWidget("dao-ship", [
+          "\uD83D\uDEA2 Ship Pipeline \u2014 #" + proposal!.id + ": " + proposal!.title,
+          "",
+          step + " " + detail,
+          "\u23F3 Elapsed: calculating...",
+        ]);
         pi.sendMessage({
           customType: "dao-ship-progress",
           content: `# 🚢 Ship Pipeline — #${proposal!.id}: ${proposal!.title}\n\n` +
@@ -2054,6 +2063,11 @@ export default function daoExtension(pi: ExtensionAPI) {
         const checkDetail = controlResultValue
           ? `${controlResultValue.warningCount} warning(s)`
           : "Previously passed";
+
+        // Clear status bar and widget on completion
+        ctx.ui.setStatus("dao-ship", undefined);
+        ctx.ui.setWidget("dao-ship", undefined);
+        ctx.ui.notify("Pipeline complete for #" + proposal.id, "info");
 
         pi.sendMessage({
           customType: "dao-ship-result",
@@ -2349,8 +2363,12 @@ export default function daoExtension(pi: ExtensionAPI) {
         recordAudit(proposal.id, "governance", "deliberation_started", "user",
           `Quickstart: deliberation started on proposal #${proposal.id}`);
 
+        ctx.ui.setStatus("dao-quickstart", "Step 2/4: Deliberating (10 agents, ~3 min)...");
+        ctx.ui.notify("Step 2/4: Deliberating with 10 agents (~3 min)...", "info");
+
         const agentOutputs = await dispatchSwarm(proposal, state.agents);
 
+        ctx.ui.setStatus("dao-quickstart", "Step 2/4: Deliberation complete");
         const votes = agentOutputs.map((output) => {
           const agent = state.agents.find((a) => a.id === output.agentId);
           const weight = agent?.weight ?? 1;
@@ -2411,6 +2429,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         }
 
         // ── STEP 3: Control Gates ───────────────────────────
+        ctx.ui.setStatus("dao-quickstart", "Step 3/4: Running control gates...");
         const controlResult = runGates(proposal);
         const checklist = generateChecklist(proposal);
         controlResult.checklist = checklist;
