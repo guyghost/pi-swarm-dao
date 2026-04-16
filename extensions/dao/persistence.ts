@@ -196,6 +196,10 @@ export function restoreState(ctx: any): void {
     if (!currentState.snapshots) {
       currentState.snapshots = {};
     }
+    // Migrate state missing verifications (Proposal #7)
+    if (!currentState.verifications) {
+      currentState.verifications = {};
+    }
   }
 
   if (!restored) {

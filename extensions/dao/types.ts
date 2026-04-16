@@ -224,6 +224,34 @@ export interface DryRunResult {
   canProceed: boolean;
 }
 
+// ── Execution Verification (Proposal #7) ──────────────────
+
+/** Verification status of a proposal execution */
+export type VerificationStatus = "unverified" | "success" | "partial" | "failed";
+
+/** Result of post-execution verification */
+export interface ExecutionVerification {
+  proposalId: number;
+  status: VerificationStatus;
+  timestamp: string;
+  /** Files that were actually changed (from git diff) */
+  filesChanged: string[];
+  /** Files expected to change but didn't */
+  missingFiles: string[];
+  /** Test run output (stdout) */
+  testOutput?: string;
+  /** Number of tests passing */
+  testsPassed?: number;
+  /** Number of tests failing */
+  testsFailed?: number;
+  /** Whether compilation succeeded */
+  compilationOk: boolean;
+  /** Git status after execution */
+  gitClean: boolean;
+  /** Human-readable summary */
+  summary: string;
+}
+
 // ── Host Project Context ──────────────────────────────────────
 
 /** Information about the project where the DAO extension is running */
@@ -558,6 +586,8 @@ export interface DAOState {
   outcomes: Record<number, ProposalOutcome>;
   // Dry-Run & Rollback (Proposal #8)
   snapshots: Record<number, ExecutionSnapshot>;
+  // Execution Verification (Proposal #7)
+  verifications: Record<number, ExecutionVerification>;
   // Host project context (detected at runtime)
   hostContext?: HostProjectContext;
 }
@@ -780,5 +810,6 @@ export function createInitialState(): DAOState {
     artefacts: {},
     outcomes: {},
     snapshots: {},
+    verifications: {},
   };
 }

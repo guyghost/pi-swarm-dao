@@ -28,6 +28,7 @@ import { synthesize } from "./intelligence/synthesis.js";
 
 // Layer 3: Delivery
 import { executeProposal } from "./delivery/execution.js";
+import { verifyExecution, formatVerification } from "./delivery/verification.js";
 import { getOutcome, initOutcome, addRating, addMetric, markReviewed, generateDashboard } from "./delivery/outcomes.js";
 import { captureSnapshot, updateSnapshotFiles, getSnapshot, performDryRun, performRollback } from "./delivery/dry-run.js";
 import { detectHostContext, formatHostContext, buildAgentHostContext } from "./host-context.js";
@@ -134,6 +135,7 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- \`dao_dashboard\` → view outcome tracking dashboard`;
     daoContext += `\n- \`dao_dry_run\` → preview execution without applying changes`;
     daoContext += `\n- \`dao_rollback\` → revert proposal to pre-execution snapshot`;
+    daoContext += `\n- \`dao_verify\` → verify execution results (files, tests, compilation)`;
     daoContext += `\n\n**Self-Amending Tools:**`;
     daoContext += `\n- \`dao_propose_amendment\` → propose changes to DAO agents, config, quorum, gates, or councils`;
     daoContext += `\n- \`dao_update_agent\` → shortcut to propose agent property changes (creates governance-change proposal)`;
@@ -1160,9 +1162,29 @@ export default function daoExtension(pi: ExtensionAPI) {
         // GitHub Issue — persist execution result
         ghAddExecution(proposal, result);
 
+        // Post-execution verification (Proposal #7)
+        const verification = verifyExecution(proposal.id, [], process.cwd());
+        const state = getState();
+        state.verifications[proposal.id] = verification;
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "execution_verified",
+          "system",
+          `Execution verification: ${verification.status} (${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed)`,
+        );
+
+        const verificationSummary = verification.status === "success"
+          ? `✅ Verified: ${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed, compilation OK`
+          : verification.status === "partial"
+          ? `⚠️ Partial: ${verification.testsFailed ?? 0} test(s) failed or ${verification.missingFiles.length} missing file(s)`
+          : `❌ Failed: ${verification.summary}`;
+
         return toolResult(
           `# 🚀 Execution Complete — #${proposal.id}: ${proposal.title}\n\n` +
-          `**Status:** ✅ Executed\n\n` +
+          `**Status:** ✅ Executed\n` +
+          `**Verification:** ${verificationSummary}\n\n` +
           `## Execution Output\n${result}\n\n` +
           `---\n\nRun \`dao_artefacts\` with proposalId ${proposal.id} to view all generated artefacts.`
         );
@@ -2557,6 +2579,54 @@ export default function daoExtension(pi: ExtensionAPI) {
       );
 
       return toolResult(formatted);
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_verify — Post-execution verification (Proposal #7)
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_verify",
+    label: "DAO Verify Execution",
+    description:
+      "Run post-execution verification on a proposal. Checks file changes, compilation, tests, and git status. Use after dao_execute to confirm delivery quality.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to verify" }),
+      expectedFiles: Type.Optional(Type.Array(Type.String(), { description: "Files expected to have been changed" })),
+    }),
+    promptSnippet: "dao_verify — Verify execution results for a proposal",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "executed" && proposal.status !== "failed" && proposal.status !== "controlled") {
+        return toolResult(
+          `Proposal #${proposal.id} has status "${proposal.status}". Only executed, failed, or controlled proposals can be verified.`
+        );
+      }
+
+      const verification = verifyExecution(
+        proposal.id,
+        params.expectedFiles ?? [],
+        process.cwd(),
+      );
+
+      // Store verification result
+      const state = getState();
+      state.verifications[proposal.id] = verification;
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_verified",
+        "system",
+        `Manual verification: ${verification.status} (${verification.testsPassed ?? 0}/${(verification.testsPassed ?? 0) + (verification.testsFailed ?? 0)} tests, ${verification.filesChanged.length} files)`
+      );
+
+      return toolResult(formatVerification(verification));
     },
   });
 
