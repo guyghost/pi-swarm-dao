@@ -8,6 +8,7 @@ import type {
   ProposalType,
 } from "../types.js";
 import { getState, setState } from "../persistence.js";
+import { buildDependencyGraph, checkReadiness } from "../governance/dependency-graph.js";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -534,6 +535,70 @@ const gateAcceptanceCriteria = (proposal: Proposal): GateResult => {
   };
 };
 
+/** Check that all hard dependencies are satisfied before execution */
+const gateDependencyReadiness: GateFn = (proposal) => {
+  const readiness = checkReadiness(proposal.id);
+  if (!readiness) {
+    return { gateId: "dependency-readiness", name: "Dependency Readiness", passed: true, severity: "info", message: "No dependencies found" };
+  }
+
+  const hardUnsatisfied = readiness.unsatisfiedDeps.filter(d => d.type === "hard");
+  const allUnsatisfied = readiness.unsatisfiedDeps;
+
+  if (hardUnsatisfied.length > 0) {
+    return {
+      gateId: "dependency-readiness",
+      name: "Dependency Readiness",
+      passed: false,
+      severity: "blocker",
+      message: `${hardUnsatisfied.length} unsatisfied hard dep(s): ${hardUnsatisfied.map(d => "#" + d.proposalId + " (" + d.status + ")").join(", ")}`,
+    };
+  }
+
+  if (allUnsatisfied.length > 0) {
+    return {
+      gateId: "dependency-readiness",
+      name: "Dependency Readiness",
+      passed: true,
+      severity: "warning",
+      message: `${allUnsatisfied.length} unsatisfied soft dep(s): ${allUnsatisfied.map(d => "#" + d.proposalId).join(", ")}`,
+    };
+  }
+
+  return { gateId: "dependency-readiness", name: "Dependency Readiness", passed: true, severity: "info", message: "All dependencies satisfied" };
+};
+
+/** Check for conflicts with other active proposals */
+const gateDependencyConflict: GateFn = (proposal) => {
+  const graph = buildDependencyGraph();
+  const relevantConflicts = graph.conflicts.filter(
+    c => c.proposalA === proposal.id || c.proposalB === proposal.id,
+  );
+
+  if (relevantConflicts.length === 0) {
+    return { gateId: "dependency-conflict", name: "Dependency Conflict", passed: true, severity: "info", message: "No conflicts detected" };
+  }
+
+  const blockers = relevantConflicts.filter(c => c.severity === "blocker");
+  if (blockers.length > 0) {
+    return {
+      gateId: "dependency-conflict",
+      name: "Dependency Conflict",
+      passed: false,
+      severity: "blocker",
+      message: `${blockers.length} blocker conflict(s): ${blockers.map(c => "#" + c.proposalA + " \u2194 #" + c.proposalB + " (" + c.conflictType + ")").join("; ")}`,
+    };
+  }
+
+  return {
+    gateId: "dependency-conflict",
+    name: "Dependency Conflict",
+    passed: true,
+    severity: "warning",
+    message: `${relevantConflicts.length} warning conflict(s): ${relevantConflicts.map(c => "#" + c.proposalA + " \u2194 #" + c.proposalB).join("; ")}`,
+  };
+};
+
 const GATES: Record<string, GateFn> = {
   "quorum-quality": gateQuorumQuality,
   "risk-threshold": gateRiskThreshold,
@@ -547,6 +612,8 @@ const GATES: Record<string, GateFn> = {
   "prompt-integrity": gatePromptIntegrity,
   "circular-amendment": gateCircularAmendment,
   "acceptance-criteria": gateAcceptanceCriteria,
+  "dependency-readiness": gateDependencyReadiness,
+  "dependency-conflict": gateDependencyConflict,
 };
 
 // ── Public API ───────────────────────────────────────────────
