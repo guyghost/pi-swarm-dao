@@ -655,12 +655,16 @@ export default function daoExtension(pi: ExtensionAPI) {
     name: "dao_propose",
     label: "DAO Propose",
     description:
-      "Create a new proposal for the DAO to deliberate on. Requires a title, type, and description.",
+      "Create a new proposal for the DAO to deliberate on. Requires a title, type, and description. Structured fields (problemStatement, acceptanceCriteria, successMetrics, rollbackConditions) are strongly recommended for quality deliberation.",
     parameters: Type.Object({
       title: Type.String({ description: "Short title for the proposal" }),
       type: StringEnum(PROPOSAL_TYPES, { description: "Proposal type category" }),
       description: Type.String({ description: "Detailed description of what is being proposed" }),
       context: Type.Optional(Type.String({ description: "Additional context (market data, constraints, prior decisions)" })),
+      problemStatement: Type.Optional(Type.String({ description: "Structured problem statement: what problem does this solve and for whom?" })),
+      acceptanceCriteria: Type.Optional(Type.Array(Type.String(), { description: "Measurable, testable conditions that must be met for the proposal to be considered successful. E.g. ['Test coverage >= 80%', 'Response time < 500ms']" })),
+      successMetrics: Type.Optional(Type.Array(Type.String(), { description: "Quantitative metrics to track after execution. E.g. ['deliberation_latency < 60s', 'proposal_throughput >= 5/day']" })),
+      rollbackConditions: Type.Optional(Type.Array(Type.String(), { description: "Measurable triggers for rollback. E.g. ['Test suite failure rate > 10%', 'Performance regression > 20%']" })),
     }),
     promptSnippet: "dao_propose — Create a new DAO proposal for swarm deliberation",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -676,6 +680,48 @@ export default function daoExtension(pi: ExtensionAPI) {
         "user",
         params.context,
       );
+
+      // Store structured fields (Proposal #6 — Template)
+      const structuredFields: string[] = [];
+      const missingFields: string[] = [];
+
+      if (params.problemStatement) {
+        (proposal as any).problemStatement = params.problemStatement;
+        structuredFields.push("problemStatement");
+      } else {
+        missingFields.push("problemStatement");
+      }
+
+      if (params.acceptanceCriteria && params.acceptanceCriteria.length > 0) {
+        proposal.acceptanceCriteria = params.acceptanceCriteria.map((ac, i) => ({
+          id: `AC-${i + 1}`,
+          given: "Proposal is executed",
+          when: "Implementation is verified",
+          then: ac,
+        }));
+        structuredFields.push("acceptanceCriteria");
+      } else {
+        missingFields.push("acceptanceCriteria");
+      }
+
+      if (params.successMetrics && params.successMetrics.length > 0) {
+        (proposal as any).successMetrics = params.successMetrics;
+        structuredFields.push("successMetrics");
+      } else {
+        missingFields.push("successMetrics");
+      }
+
+      if (params.rollbackConditions && params.rollbackConditions.length > 0) {
+        (proposal as any).rollbackConditions = params.rollbackConditions;
+        structuredFields.push("rollbackConditions");
+      } else {
+        missingFields.push("rollbackConditions");
+      }
+
+      // Quality warning for missing structured fields
+      const qualityWarning = missingFields.length > 0
+        ? `\n\n> ⚠️ **Quality Warning:** Missing structured fields: ${missingFields.join(", ")}. These are strongly recommended for quality deliberation and control gate validation. Future versions may require them.`
+        : "";
 
       // Classify risk zone
       const zone = classifyRiskZone(proposal);
@@ -706,7 +752,11 @@ export default function daoExtension(pi: ExtensionAPI) {
         `**Stage:** intake\n\n` +
         `## Description\n${params.description}\n` +
         (params.context ? `\n\n## Context\n${params.context}` : "") +
-        `${ghNote}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
+        (params.problemStatement ? `\n\n## Problem Statement\n${params.problemStatement}` : "") +
+        (params.acceptanceCriteria?.length ? `\n\n## Acceptance Criteria\n${params.acceptanceCriteria.map((c, i) => `- [ ] AC-${i + 1}: ${c}`).join("\n")}` : "") +
+        (params.successMetrics?.length ? `\n\n## Success Metrics\n${params.successMetrics.map(m => `- ${m}`).join("\n")}` : "") +
+        (params.rollbackConditions?.length ? `\n\n## Rollback Conditions\n${params.rollbackConditions.map(c => `- ${c}`).join("\n")}` : "") +
+        `${qualityWarning}${ghNote}\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`
       );
     },
   });
