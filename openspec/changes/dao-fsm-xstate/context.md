@@ -1,7 +1,7 @@
-# Context: DAO FSM → XState v5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Hotfix)
+# Context: DAO FSM → XState v5 (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Hotfix + Phase 5)
 
 ## Objective
-Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 machine **internally** behind `transitionProposal()`. Migrate all 17 `updateProposalStatus()` call-sites to use `transitionProposal()`. Add deprecated wrapper. Harden FSM guards and add abandon transition (Phase 2). Implement critical vs best-effort hooks (Phase 3). Migrate index.ts call-sites from deprecated wrapper to direct FSM events (Phase 4). Fix 2 major FSM bypasses + 1 minor (Hotfix).
+Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 machine **internally** behind `transitionProposal()`. Migrate all 17 `updateProposalStatus()` call-sites to use `transitionProposal()`. Add deprecated wrapper. Harden FSM guards and add abandon transition (Phase 2). Implement critical vs best-effort hooks (Phase 3). Migrate index.ts call-sites from deprecated wrapper to direct FSM events (Phase 4). Fix 2 major FSM bypasses + 1 minor (Hotfix). Add exhaustive FSM test matrix, amendmentState sync hooks, and mermaid diagram from XState machine (Phase 5).
 
 ## Constraints
 - Platform: Node.js (Probot extension)
@@ -33,11 +33,14 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 | updatePipelineStage: stage-only (no status mutation via STAGE_TO_STATUS) | Pipeline stage and status are orthogonal; status must go through FSM | @codegen |
 | statusToEvent: throws on unknown mappings instead of silent fallback | Silent 'deliberate' fallback masked bugs; explicit error surfaces invalid transitions | @codegen |
 | dao_execute: added missing transitionProposal('execute') after storeExecutionResult | Success path never called FSM — status change was entirely via bypass | @codegen |
+| Exhaustive 7×9 state×event matrix (63 tests) | No orphan state can exist — every state has defined behavior for every event | @codegen |
+| AmendmentState sync hooks (best-effort, *→executed / *→rejected) | proposal.amendmentState must track lifecycle terminal states for active amendments | @codegen |
+| diagram.ts rewritten from XState machine data | Machine is source of truth; diagram includes abandon transition and terminal markers | @codegen |
 
 ## Artifacts Produced
 | File | Agent | Status |
 |------|-------|--------|
-| `extensions/dao/core/__tests__/machine.test.ts` | @tests/@codegen | ✅ GREEN (34 tests) |
+| `extensions/dao/core/__tests__/machine.test.ts` | @tests/@codegen | ✅ GREEN (97 tests: 34 original + 63 exhaustive matrix) |
 | `vitest.config.ts` | @tests | ✅ Updated include pattern |
 | `extensions/dao/core/machine.ts` | @codegen | ✅ 4 guards, 9 events, abandon transition |
 | `extensions/dao/core/states.ts` | @codegen | ✅ Updated guard + abandon event/transition |
@@ -49,14 +52,20 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 | `extensions/dao/governance/proposals.ts` | @codegen/@integrator | ✅ Hotfix: storeExecutionResult data-only, updatePipelineStage stage-only, statusToEvent throws on unknown |
 | `extensions/dao/index.ts` | @codegen/@integrator | ✅ Hotfix: dao_execute added transitionProposal('execute'), dao:ship added stage update |
 | `tests/shell/hooks.test.ts` | @codegen | ✅ Updated for async |
+| `extensions/dao/core/diagram.ts` | @codegen | ✅ Rewritten from XState machine data (was legacy table) |
+| `extensions/dao/shell/amendment-sync.ts` | @codegen | ✅ Best-effort hooks for amendmentState sync |
+| `extensions/dao/shell/__tests__/amendment-sync.test.ts` | @codegen | ✅ 15 new tests |
+| `docs/dao/state-machine.md` | @codegen | ✅ Updated mermaid diagram with guards, terminals, abandon |
 
 ## Test Results
-- **Machine tests**: 34/34 passed (incl. 4 Phase 2 hardened guards)
+- **Machine tests**: 97/97 passed (34 original + 63 exhaustive matrix)
 - **New hook tests**: 13/13 passed
-- **Full suite**: 178/178 passed (13 test files)
+- **Amendment sync tests**: 15/15 passed
+- **Full suite**: 256/256 passed (15 test files)
 - **TypeScript**: Compiles clean (0 errors)
 - **Integration re-check**: `npx vitest run` ✅, `npx tsc --noEmit` ✅
 - **Hotfix re-check**: `npx vitest run` ✅ 178/178, `npx tsc --noEmit` ✅ 0 errors
+- **Phase 5 re-check**: `npx vitest run` ✅ 256/256, `npx tsc --noEmit` ✅ 0 errors
 
 ## Conflicts Resolved
 - Phase 2 vs Phase 3 mismatch resolved: shell reject-event mapping now forwards `hasVotes`, and deprecated `updateProposalStatus()` provides `hasVotes: true` for `deliberating → rejected`.
@@ -74,6 +83,8 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 | Context updates | 4 | proposalId, quorumMet, gatesPassed, approvalScore |
 | Retry resilience | 2 | Single retry recovery, multiple fail/retry cycles |
 | Phase 2: hardened guards | 4 | hasVotes required/blocked, abandon transition, abandoned is final |
+| Phase 5: exhaustive matrix | 63 | 7 states × 9 events: valid transitions confirmed, invalid ignored |
+| Amendment sync | 15 | executed sync (7), rejected sync (5), best-effort (2), non-target (1) |
 | Critical hooks | 4 | Critical failure throws, first critical stops, async critical, wildcard critical |
 | Best-effort hooks | 3 | Failure logged, subsequent hooks continue, default is best-effort |
 | Hook ordering | 2 | Critical before best-effort, getHooksForTransition sorting |
@@ -88,3 +99,4 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 <!-- [@codegen → @review] Phase 2 hardened guards complete. 178/178 tests pass. Machine: 4 guards (quorumMet, gatesPassed, quorumMetForGates, hasVotes), 9 event types, failed→abandon→rejected. -->
 <!-- [@codegen → @review] Phase 4 migration complete. All 17 updateProposalStatus call-sites in index.ts replaced with direct transitionProposal(id, event, GuardContext). 6 assertTransition calls removed. Legacy assertTransition in lifecycle.ts marked @deprecated. Full suite: 178/178 pass. TypeScript clean. -->
 <!-- [@codegen → @review] Hotfix complete. Fixed 2 major FSM bypasses (storeExecutionResult, updatePipelineStage) + 1 minor (statusToEvent silent fallback). dao_execute now calls transitionProposal('execute'). dao:ship stage update added before transition. 178/178 pass. TypeScript clean. No changes to core/. -->
+<!-- [@codegen → @review] Phase 5 complete. 256/256 tests pass (78 new: 63 exhaustive matrix + 15 amendment-sync). TypeScript clean. Diagram rewritten from XState machine. Docs updated with abandon transition, guards table, terminal markers. -->

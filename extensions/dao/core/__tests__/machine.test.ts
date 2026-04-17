@@ -1,16 +1,17 @@
 // ============================================================
-// TDD RED Phase — XState v5 Proposal State Machine Tests
+// XState v5 Proposal State Machine Tests
 // ============================================================
-// These tests define the contract for proposalMachine
-// (extensions/dao/core/machine.ts) which does not exist yet.
+// Phase 1: TDD contract tests (30)
+// Phase 2: Hardened guard tests (4)
+// Phase 5: Exhaustive state × event matrix (63)
 //
 // Run: npx vitest run extensions/dao/core/__tests__/machine.test.ts
-// All tests MUST FAIL until the machine is implemented.
 // ============================================================
 
 import { describe, it, expect } from "vitest";
 import { createActor } from "xstate";
 import { proposalMachine } from "../machine.js";
+import type { MachineEvents } from "../machine.js";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -402,4 +403,85 @@ describe("Phase 2: hardened guards", () => {
     // Context preserved through abandon
     expect(actor.getSnapshot().context.proposalId).toBe(88);
   });
+});
+
+// ── Phase 5: Exhaustive State × Event Matrix ────────────────
+
+describe("exhaustive state × event matrix", () => {
+  // ── Types ──────────────────────────────────────────────────
+
+  type TestState = "open" | "deliberating" | "approved" | "controlled" | "executed" | "failed" | "rejected";
+  type TestEvent = "deliberate" | "approve" | "reject" | "pass_gates" | "fail_gates" | "execute" | "fail_execution" | "retry" | "abandon";
+
+  const allStates: TestState[] = ["open", "deliberating", "approved", "controlled", "executed", "failed", "rejected"];
+  const allEvents: TestEvent[] = ["deliberate", "approve", "reject", "pass_gates", "fail_gates", "execute", "fail_execution", "retry", "abandon"];
+
+  // ── Valid transition definitions ───────────────────────────
+  // Maps "state:event" to { target, eventPayload }.
+  // Every combination NOT in this map must be ignored (state unchanged).
+
+  const validTransitions: Record<string, { target: TestState; eventPayload: MachineEvents }> = {
+    "open:deliberate":            { target: "deliberating", eventPayload: { type: "deliberate" } },
+    "deliberating:approve":       { target: "approved",     eventPayload: { type: "approve", quorumMet: true } },
+    "deliberating:reject":        { target: "rejected",     eventPayload: { type: "reject", hasVotes: true } },
+    "deliberating:pass_gates":    { target: "controlled",   eventPayload: { type: "pass_gates", quorumMet: true } },
+    "approved:reject":            { target: "rejected",     eventPayload: { type: "reject" } },
+    "approved:pass_gates":        { target: "controlled",   eventPayload: { type: "pass_gates", gatesPassed: true } },
+    "controlled:execute":         { target: "executed",     eventPayload: { type: "execute", gatesPassed: true } },
+    "controlled:fail_execution":  { target: "failed",       eventPayload: { type: "fail_execution" } },
+    "failed:retry":               { target: "controlled",   eventPayload: { type: "retry" } },
+    "failed:abandon":             { target: "rejected",     eventPayload: { type: "abandon" } },
+  };
+
+  // Default payloads for each event (used when testing invalid combinations).
+  // Provide maximum guard data to prove the transition is rejected purely
+  // because the state doesn't accept the event — not because guards fail.
+
+  const defaultPayloads: Record<TestEvent, MachineEvents> = {
+    deliberate:      { type: "deliberate" },
+    approve:         { type: "approve", quorumMet: true },
+    reject:          { type: "reject", hasVotes: true },
+    pass_gates:      { type: "pass_gates", gatesPassed: true, quorumMet: true },
+    fail_gates:      { type: "fail_gates" },
+    execute:         { type: "execute", gatesPassed: true },
+    fail_execution:  { type: "fail_execution" },
+    retry:           { type: "retry" },
+    abandon:         { type: "abandon" },
+  };
+
+  // ── Helper: create actor at an arbitrary state ─────────────
+
+  const createActorAtState = (state: TestState) => {
+    const snapshot = proposalMachine.resolveState({
+      value: state,
+      context: { proposalId: 1, quorumMet: true, gatesPassed: true, approvalScore: 80 },
+    });
+    const persisted = proposalMachine.getPersistedSnapshot(snapshot);
+    const actor = createActor(proposalMachine, {
+      snapshot: persisted,
+      input: { proposalId: 1 },
+    });
+    actor.start();
+    return actor;
+  };
+
+  // ── Matrix: 7 states × 9 events = 63 test cases ───────────
+
+  for (const state of allStates) {
+    for (const event of allEvents) {
+      const key = `${state}:${event}`;
+      const valid = validTransitions[key];
+      const expectedTarget = valid ? valid.target : state;
+
+      it(`${key} → ${expectedTarget}${valid ? " ✓" : " (ignored)"}`, () => {
+        const actor = createActorAtState(state);
+        const payload = valid ? valid.eventPayload : defaultPayloads[event];
+
+        actor.send(payload);
+        expect(actor.getSnapshot().value).toBe(expectedTarget);
+
+        actor.stop();
+      });
+    }
+  }
 });

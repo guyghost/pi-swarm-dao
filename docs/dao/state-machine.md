@@ -1,28 +1,33 @@
 # Proposal State Machine
 
-Auto-generated from the formal FSM in `core/states.ts`.
+Auto-generated from the XState v5 FSM in `core/machine.ts`.
 
 ```mermaid
 stateDiagram-v2
     direction TB
 
+    %% States
     open : 📝 Open
     deliberating : 🗳️ Deliberating
     approved : ✅ Approved
     controlled : 🔒 Controlled
-    executed : 🚀 Executed
+    state "🚀 Executed" as executed
+    executed --> [*]
     failed : ⚠️ Failed
-    rejected : ❌ Rejected
+    state "❌ Rejected" as rejected
+    rejected --> [*]
 
+    %% Transitions
     open --> deliberating : deliberate
-    deliberating --> approved : approve [Quorum must be met]
-    deliberating --> rejected : reject [Must have deliberation results]
-    deliberating --> controlled : pass_gates [Quorum must be met before gates]
-    approved --> controlled : pass_gates [All control gates must pass]
+    deliberating --> approved : approve [quorumMet]
+    deliberating --> rejected : reject [hasVotes]
+    deliberating --> controlled : pass_gates [quorumMet]
+    approved --> controlled : pass_gates [gatesPassed]
     approved --> rejected : reject
-    controlled --> executed : execute [Gates must have passed]
+    controlled --> executed : execute [gatesPassed]
     controlled --> failed : fail_execution
     failed --> controlled : retry
+    failed --> rejected : abandon
 ```
 
 ## Transition Table
@@ -30,27 +35,39 @@ stateDiagram-v2
 | From | Event | To | Guard |
 |------|-------|----|-------|
 | open | deliberate | deliberating | — |
-| deliberating | approve | approved | Quorum met |
-| deliberating | reject | rejected | Has deliberation results |
-| deliberating | pass_gates | controlled | Quorum met |
-| approved | pass_gates | controlled | All gates passed |
+| deliberating | approve | approved | quorumMet |
+| deliberating | reject | rejected | hasVotes |
+| deliberating | pass_gates | controlled | quorumMet |
+| approved | pass_gates | controlled | gatesPassed |
 | approved | reject | rejected | — |
-| controlled | execute | executed | Gates passed |
+| controlled | execute | executed | gatesPassed |
 | controlled | fail_execution | failed | — |
 | failed | retry | controlled | — |
+| failed | abandon | rejected | — |
 
 ## Terminal States
-- `executed` — proposal successfully delivered
-- `rejected` — proposal denied
+
+- `executed` — proposal successfully delivered → `[*]`
+- `rejected` — proposal denied or abandoned → `[*]`
+
+## Guards
+
+| Guard | Description | Used By |
+|-------|-------------|---------|
+| `quorumMet` | `event.quorumMet === true` — quorum reached | deliberating→approve, deliberating→pass_gates |
+| `gatesPassed` | `event.gatesPassed === true` — all gates passed | approved→pass_gates, controlled→execute |
+| `hasVotes` | `event.hasVotes === true` — votes have been cast | deliberating→reject |
 
 ## Architecture (FC&IS)
 
 ```
-core/states.ts       ← Transition table + guard types (pure data)
-core/evaluate.ts     ← evaluateTransition(), getAllowedTransitions() (pure functions)
-core/diagram.ts      ← Mermaid diagram export (pure function)
-shell/hooks.ts       ← onTransition() hook registry (side effects)
+core/machine.ts            ← XState v5 proposal machine (source of truth)
+core/states.ts             ← Legacy transition table + guard types (kept for compat)
+core/evaluate.ts           ← evaluateTransition(), getAllowedTransitions() (pure functions)
+core/diagram.ts            ← Mermaid diagram export from machine data (pure function)
+shell/hooks.ts             ← onTransition() hook registry (side effects)
 shell/lifecycle-manager.ts ← transitionProposal() (side effects + persistence)
+shell/amendment-sync.ts    ← AmendmentState sync hooks (best-effort)
 governance/lifecycle.ts    ← Facade (backward compatible API)
 ```
 
@@ -58,11 +75,12 @@ governance/lifecycle.ts    ← Facade (backward compatible API)
 
 | Event | Trigger |
 |-------|---------|
-| `deliberate` | `dao_deliberate` called |
-| `approve` | Tally shows quorum + approval met |
-| `reject` | Tally shows quorum not met or approval below threshold |
-| `pass_gates` | `dao_check` returns all gates passed |
-| `fail_execution` | `dao_execute` encounters error |
+| `deliberate` | Swarm starts deliberation on a proposal |
+| `approve` | Tally shows quorum + approval threshold met |
+| `reject` | Tally shows quorum not met or below threshold (requires `hasVotes`) |
+| `pass_gates` | `dao_check` returns all control gates passed |
+| `fail_gates` | Control gates fail (unused — transitions not defined in machine) |
 | `execute` | `dao_execute` completes successfully |
-| `retry` | Retry from failed state |
-| `archive` | Archive a terminal proposal |
+| `fail_execution` | `dao_execute` encounters error |
+| `retry` | Retry from failed state back to controlled |
+| `abandon` | Abandon a failed proposal → rejected (final) |
