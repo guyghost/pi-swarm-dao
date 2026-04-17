@@ -19,7 +19,8 @@ import { detectHostContext } from "../host-context.js";
 export async function executeProposal(
   proposal: Proposal,
   executorId?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs: number = 300_000, // 5 min default
 ): Promise<string> {
   // Find the executor agent (default: "delivery")
   const agentId = executorId ?? "delivery";
@@ -62,8 +63,8 @@ export async function executeProposal(
       `Task: ${executionPrompt}`,
     ];
 
-    /** No process-level timeout — execution (coding) can take arbitrarily long.
-     *  Users can abort via Ctrl+C (AbortSignal from Pi). */
+    /** Process-level timeout enforced via timeoutMs parameter (default: 5 min).
+     *  Users can also abort via Ctrl+C (AbortSignal from Pi). */
     const SIGKILL_GRACE_MS = 5_000;
 
     return await new Promise<string>((resolve, reject) => {
@@ -97,6 +98,12 @@ export async function executeProposal(
         }, SIGKILL_GRACE_MS);
       };
 
+      // Timeout: kill process if it exceeds the configured duration
+      const timeoutTimerId = setTimeout(() => {
+        escalateKill();
+        reject(new Error(`Execution timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+
       // Handle external abort (AbortSignal)
       const onAbort = () => {
         escalateKill();
@@ -113,6 +120,7 @@ export async function executeProposal(
       proc.on("close", (code) => {
         // CRITICAL-1: Clear orphaned timers to prevent memory leaks
         if (killTimerId) clearTimeout(killTimerId);
+        clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
 
         // Convert buffered chunks to strings
@@ -137,6 +145,7 @@ export async function executeProposal(
 
       proc.on("error", (err) => {
         if (killTimerId) clearTimeout(killTimerId);
+        clearTimeout(timeoutTimerId);
         signal?.removeEventListener("abort", onAbort);
         reject(new Error(`Failed to spawn execution agent: ${err.message}`));
       });

@@ -677,10 +677,13 @@ export default function daoExtension(pi: ExtensionAPI) {
       if (result.success) {
         proposal.amendmentState = "executed";
         proposal.preAmendmentSnapshot = result.snapshot;
-        await transitionProposal(proposal.id, "execute", {
+        const amendmentExecResult = await transitionProposal(proposal.id, "execute", {
           status: proposal.status,
           gatesPassed: true,
         });
+        if (!amendmentExecResult.success) {
+          throw new Error(`FSM transition failed (execute amendment): ${amendmentExecResult.error}`);
+        }
 
         recordAudit(
           proposal.id,
@@ -1136,9 +1139,12 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       // Transition to deliberating
-      await transitionProposal(proposal.id, "deliberate", {
+      const deliberateTransitionResult = await transitionProposal(proposal.id, "deliberate", {
         status: proposal.status,
       });
+      if (!deliberateTransitionResult.success) {
+        return toolResult(`❌ Cannot start deliberation: ${deliberateTransitionResult.error}`);
+      }
 
       recordAudit(
         proposal.id,
@@ -1266,7 +1272,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const newStatus: "approved" | "rejected" = tally.approved
         ? "approved"
         : "rejected";
-      await transitionProposal(
+      const tallyResult = await transitionProposal(
         proposal.id,
         newStatus === "approved" ? "approve" : "reject",
         buildContext(proposal.id, {
@@ -1275,6 +1281,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           approvalScore: tally.approvalScore,
         }),
       );
+      if (!tallyResult.success) {
+        return toolResult(`❌ Deliberation tally transition failed (${newStatus}): ${tallyResult.error}`);
+      }
 
       const durationMs = Date.now() - startTime;
 
@@ -1391,10 +1400,13 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // Update status to controlled if all gates passed
       if (controlResult.allGatesPassed && proposal.status !== "controlled") {
-        await transitionProposal(proposal.id, "pass_gates", {
+        const gatesTransitionResult = await transitionProposal(proposal.id, "pass_gates", {
           status: proposal.status,
           gatesPassed: true,
         });
+        if (!gatesTransitionResult.success) {
+          return toolResult(`❌ Control gates passed but FSM transition failed: ${gatesTransitionResult.error}`);
+        }
       }
 
       // Audit
@@ -1529,9 +1541,12 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // Allow retry from failed status — transition back to controlled first
       if (proposal.status === "failed") {
-        await transitionProposal(proposal.id, "retry", {
+        const retryResult = await transitionProposal(proposal.id, "retry", {
           status: proposal.status,
         });
+        if (!retryResult.success) {
+          return toolResult(`❌ Cannot retry from failed state: ${retryResult.error}`);
+        }
       }
 
       if (proposal.status !== "approved" && proposal.status !== "controlled") {
@@ -1577,10 +1592,13 @@ export default function daoExtension(pi: ExtensionAPI) {
 
         // Transition through FSM: controlled → executed
         proposal.stage = "postmortem";
-        await transitionProposal(proposal.id, "execute", {
+        const execTransitionResult = await transitionProposal(proposal.id, "execute", {
           status: proposal.status,
           gatesPassed: true,
         });
+        if (!execTransitionResult.success) {
+          throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
+        }
 
         recordAudit(
           proposal.id,
@@ -1621,6 +1639,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             `---\n\nRun \`dao_artefacts\` with proposalId ${proposal.id} to view all generated artefacts.`,
         );
       } catch (err: any) {
+        // Intentionally ignore fail_execution result — we're already in an error path.
+        // If this transition also fails, the proposal stays in its current status
+        // and the original error is more important to report to the user.
         await transitionProposal(proposal.id, "fail_execution", {
           status: proposal.status,
         });
@@ -2106,9 +2127,12 @@ export default function daoExtension(pi: ExtensionAPI) {
         const startTime = Date.now();
         try {
           // Transition to deliberating
-          await transitionProposal(proposal.id, "deliberate", {
+          const batchDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
             status: proposal.status,
           });
+          if (!batchDeliberateResult.success) {
+            throw new Error(`FSM transition failed (deliberate): ${batchDeliberateResult.error}`);
+          }
           ghUpdateStatus(proposal);
           recordAudit(
             proposal.id,
@@ -2175,7 +2199,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           const newStatus: "approved" | "rejected" = tally.approved
             ? "approved"
             : "rejected";
-          await transitionProposal(
+          const batchTallyResult = await transitionProposal(
             proposal.id,
             newStatus === "approved" ? "approve" : "reject",
             buildContext(proposal.id, {
@@ -2184,6 +2208,9 @@ export default function daoExtension(pi: ExtensionAPI) {
               approvalScore: tally.approvalScore,
             }),
           );
+          if (!batchTallyResult.success) {
+            throw new Error(`FSM transition failed (${newStatus}): ${batchTallyResult.error}`);
+          }
           if (newStatus === "approved") {
             proposal.riskZone = classifyRiskZone(proposal);
           }
@@ -2220,6 +2247,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             durationMs: Date.now() - startTime,
           });
         } catch (err: any) {
+          // Intentionally ignore fail_execution result — we're already in an error path.
+          // If this transition also fails, the proposal stays in its current status
+          // and the original error is more important to report to the user.
           await transitionProposal(proposal.id, "fail_execution", {
             status: proposal.status,
           });
@@ -2528,9 +2558,12 @@ export default function daoExtension(pi: ExtensionAPI) {
         if (!skipDeliberate) {
           reportProgress("Deliberate", "Starting swarm deliberation...");
 
-          await transitionProposal(proposal.id, "deliberate", {
+          const shipDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
             status: proposal.status,
           });
+          if (!shipDeliberateResult.success) {
+            throw new Error(`FSM transition failed (deliberate): ${shipDeliberateResult.error}`);
+          }
           ghUpdateStatus(proposal);
           recordAudit(
             proposal.id,
@@ -2589,7 +2622,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
           const deliberationStatus: "approved" | "rejected" =
             tallyResult.approved ? "approved" : "rejected";
-          await transitionProposal(
+          const tallyTransitionResult = await transitionProposal(
             proposal.id,
             deliberationStatus === "approved" ? "approve" : "reject",
             buildContext(proposal.id, {
@@ -2598,6 +2631,9 @@ export default function daoExtension(pi: ExtensionAPI) {
               approvalScore: tallyResult.approvalScore,
             }),
           );
+          if (!tallyTransitionResult.success) {
+            throw new Error(`FSM transition failed (${deliberationStatus}): ${tallyTransitionResult.error}`);
+          }
           if (deliberationStatus === "approved") {
             proposal.riskZone = classifyRiskZone(proposal);
           }
@@ -2652,10 +2688,13 @@ export default function daoExtension(pi: ExtensionAPI) {
           controlResultValue.checklist = checklist;
 
           if (controlResultValue.allGatesPassed) {
-            await transitionProposal(proposal.id, "pass_gates", {
+            const gatesResult = await transitionProposal(proposal.id, "pass_gates", {
               status: proposal.status,
               gatesPassed: true,
             });
+            if (!gatesResult.success) {
+              throw new Error(`FSM transition failed (pass_gates): ${gatesResult.error}`);
+            }
           }
 
           ghAddControlResult(proposal, controlResultValue);
@@ -2691,18 +2730,30 @@ export default function daoExtension(pi: ExtensionAPI) {
         }
 
         // ── STEP 3: EXECUTE ──────────────────────────────────────
-        reportProgress("Execute", "Executing proposal...");
+        reportProgress("Execute", "Delegating to delivery agent...");
+        ctx.ui.setWorkingMessage?.("DAO: Executing proposal (⏳ this may take up to 5 minutes)...");
 
         captureSnapshot(proposal.id);
         const executionResult = await executeProposal(proposal, undefined);
+
+        ctx.ui.setWorkingMessage?.(); // Restore default
+
+        if (!executionResult || executionResult === "(no execution output)") {
+          throw new Error("Execution produced no output — delivery agent returned empty result");
+        }
+
+        reportProgress("Execute", "Delivery plan generated, finalizing...");
         storeExecutionResult(proposal.id, executionResult);
 
         // Transition through FSM: controlled → executed
         proposal.stage = "postmortem";
-        await transitionProposal(proposal.id, "execute", {
+        const execTransitionResult = await transitionProposal(proposal.id, "execute", {
           status: proposal.status,
           gatesPassed: true,
         });
+        if (!execTransitionResult.success) {
+          throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
+        }
         ghUpdateStatus(proposal);
         ghAddExecution(proposal, executionResult);
 
@@ -3045,9 +3096,12 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // ── STEP 2: Deliberate ─────────────────────────────────
       try {
-        await transitionProposal(proposal.id, "deliberate", {
+        const qsDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
           status: proposal.status,
         });
+        if (!qsDeliberateResult.success) {
+          throw new Error(`FSM transition failed (deliberate): ${qsDeliberateResult.error}`);
+        }
         ghUpdateStatus(proposal);
         recordAudit(
           proposal.id,
@@ -3110,7 +3164,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         const newStatus: "approved" | "rejected" = tally.approved
           ? "approved"
           : "rejected";
-        await transitionProposal(
+        const qsTallyResult = await transitionProposal(
           proposal.id,
           newStatus === "approved" ? "approve" : "reject",
           buildContext(proposal.id, {
@@ -3119,6 +3173,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             approvalScore: tally.approvalScore,
           }),
         );
+        if (!qsTallyResult.success) {
+          throw new Error(`FSM transition failed (${newStatus}): ${qsTallyResult.error}`);
+        }
         if (newStatus === "approved")
           proposal.riskZone = classifyRiskZone(proposal);
 
@@ -3179,10 +3236,13 @@ export default function daoExtension(pi: ExtensionAPI) {
         controlResult.checklist = checklist;
 
         if (controlResult.allGatesPassed) {
-          await transitionProposal(proposal.id, "pass_gates", {
+          const qsGatesResult = await transitionProposal(proposal.id, "pass_gates", {
             status: proposal.status,
             gatesPassed: true,
           });
+          if (!qsGatesResult.success) {
+            throw new Error(`FSM transition failed (pass_gates): ${qsGatesResult.error}`);
+          }
         }
 
         ghAddControlResult(proposal, controlResult);
@@ -3746,7 +3806,9 @@ export default function daoExtension(pi: ExtensionAPI) {
       );
 
       if (result.success) {
-        // Update proposal status back to controlled
+        // Intentionally ignore retry result — executed is a final state in the FSM,
+        // so the retry transition will be rejected. The file-level rollback still
+        // succeeds; the status mismatch is a known limitation documented in context-log seq:45.
         await transitionProposal(params.proposalId, "retry", {
           status: proposal.status,
         });

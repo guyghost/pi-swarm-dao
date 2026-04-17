@@ -36,6 +36,8 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 | Exhaustive 7×9 state×event matrix (63 tests) | No orphan state can exist — every state has defined behavior for every event | @codegen |
 | AmendmentState sync hooks (best-effort, *→executed / *→rejected) | proposal.amendmentState must track lifecycle terminal states for active amendments | @codegen |
 | diagram.ts rewritten from XState machine data | Machine is source of truth; diagram includes abandon transition and terminal markers | @codegen |
+| All 18 transitionProposal calls now check result.success | Silent failures caused pipeline desync; 15 throw, 3 intentionally ignored with documented comments | @codegen |
+| executeProposal 5-min default timeout (timeoutMs parameter) | Hung LLM would freeze command forever; timeout provides safety net | @codegen |
 
 ## Artifacts Produced
 | File | Agent | Status |
@@ -50,7 +52,8 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 | `extensions/dao/shell/__tests__/hooks.test.ts` | @codegen | ✅ 13 new tests |
 | `extensions/dao/governance/lifecycle.ts` | @codegen | ✅ assertTransition deprecated |
 | `extensions/dao/governance/proposals.ts` | @codegen/@integrator | ✅ Hotfix: storeExecutionResult data-only, updatePipelineStage stage-only, statusToEvent throws on unknown |
-| `extensions/dao/index.ts` | @codegen/@integrator | ✅ Hotfix: dao_execute added transitionProposal('execute'), dao:ship added stage update |
+| `extensions/dao/index.ts` | @codegen/@integrator | ✅ Hotfix + Bugfix: transition result checks (18 calls), execution timeout, progress feedback |
+| `extensions/dao/delivery/execution.ts` | @codegen | ✅ Bugfix: 5-min default timeout on executeProposal |
 | `tests/shell/hooks.test.ts` | @codegen | ✅ Updated for async |
 | `extensions/dao/core/diagram.ts` | @codegen | ✅ Rewritten from XState machine data (was legacy table) |
 | `extensions/dao/shell/amendment-sync.ts` | @codegen | ✅ Best-effort hooks for amendmentState sync |
@@ -66,6 +69,7 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 - **Integration re-check**: `npx vitest run` ✅, `npx tsc --noEmit` ✅
 - **Hotfix re-check**: `npx vitest run` ✅ 178/178, `npx tsc --noEmit` ✅ 0 errors
 - **Phase 5 re-check**: `npx vitest run` ✅ 256/256, `npx tsc --noEmit` ✅ 0 errors
+- **Bugfix re-check**: `npx vitest run` ✅ 256/256, `npx tsc --noEmit` ✅ 0 errors
 
 ## Conflicts Resolved
 - Phase 2 vs Phase 3 mismatch resolved: shell reject-event mapping now forwards `hasVotes`, and deprecated `updateProposalStatus()` provides `hasVotes: true` for `deliberating → rejected`.
@@ -100,3 +104,4 @@ Replace homegrown FSM (`core/states.ts` + `core/evaluate.ts`) with XState v5 mac
 <!-- [@codegen → @review] Phase 4 migration complete. All 17 updateProposalStatus call-sites in index.ts replaced with direct transitionProposal(id, event, GuardContext). 6 assertTransition calls removed. Legacy assertTransition in lifecycle.ts marked @deprecated. Full suite: 178/178 pass. TypeScript clean. -->
 <!-- [@codegen → @review] Hotfix complete. Fixed 2 major FSM bypasses (storeExecutionResult, updatePipelineStage) + 1 minor (statusToEvent silent fallback). dao_execute now calls transitionProposal('execute'). dao:ship stage update added before transition. 178/178 pass. TypeScript clean. No changes to core/. -->
 <!-- [@codegen → @review] Phase 5 complete. 256/256 tests pass (78 new: 63 exhaustive matrix + 15 amendment-sync). TypeScript clean. Diagram rewritten from XState machine. Docs updated with abandon transition, guards table, terminal markers. -->
+<!-- [@codegen → @review] Bugfix complete. Fixed 2 bugs: (1) all 18 transitionProposal calls now check result.success, (2) executeProposal has 5-min timeout. 256/256 tests pass. TypeScript clean. -->
