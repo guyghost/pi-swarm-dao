@@ -166,7 +166,7 @@ describe("getAllowedTransitions", () => {
   });
 
   it("deliberating with quorum allows approve, reject, pass_gates", () => {
-    const ctx: GuardContext = { status: "deliberating", quorumMet: true, approvalScore: 100 };
+    const ctx: GuardContext = { status: "deliberating", quorumMet: true, approvalScore: 100, hasVotes: true };
     const allowed = getAllowedTransitions("deliberating", ctx);
     expect(allowed).toContain("approve");
     expect(allowed).toContain("reject");
@@ -174,7 +174,7 @@ describe("getAllowedTransitions", () => {
   });
 
   it("deliberating without quorum blocks approve and pass_gates", () => {
-    const ctx: GuardContext = { status: "deliberating", quorumMet: false, approvalScore: 40 };
+    const ctx: GuardContext = { status: "deliberating", quorumMet: false, approvalScore: 40, hasVotes: true };
     const allowed = getAllowedTransitions("deliberating", ctx);
     expect(allowed).not.toContain("approve");
     expect(allowed).not.toContain("pass_gates");
@@ -195,10 +195,10 @@ describe("getAllowedTransitions", () => {
     expect(allowed).toContain("fail_execution");
   });
 
-  it("failed allows only retry", () => {
+  it("failed allows retry and abandon", () => {
     const ctx: GuardContext = { status: "failed" };
     const allowed = getAllowedTransitions("failed", ctx);
-    expect(allowed).toEqual(["retry"]);
+    expect(allowed).toEqual(["retry", "abandon"]);
   });
 
   it("rejected (terminal) has no allowed transitions", () => {

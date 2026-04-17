@@ -104,6 +104,10 @@ export const canTransition = (
 
 /**
  * Assert that a status transition is valid (throws).
+ *
+ * @deprecated Use `transitionProposal()` from the lifecycle manager instead.
+ * The FSM machine validates transitions internally; explicit assertion is
+ * no longer needed. Will be removed in Phase 2.
  */
 export const assertTransition = (
   from: ProposalStatus,

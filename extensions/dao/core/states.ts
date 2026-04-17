@@ -19,6 +19,7 @@ export type ProposalEvent =
   | "execute"         // delivery executes
   | "fail_execution"  // execution fails
   | "retry"           // retry from failed state
+  | "abandon"         // abandon a failed proposal → rejected
   | "archive";        // archive a terminal proposal
 
 // ── Guard function (pure predicate) ──────────────────────────
@@ -78,8 +79,8 @@ entry("deliberating", "approve", {
 });
 entry("deliberating", "reject", {
   target: "rejected",
-  guard: (ctx: GuardContext) => ctx.quorumMet === false || ctx.approvalScore !== undefined,
-  guardDescription: "Must have deliberation results",
+  guard: (ctx: GuardContext) => ctx.hasVotes === true && ctx.quorumMet !== undefined,
+  guardDescription: "Must have votes cast and quorum result (deliberation happened)",
 });
 entry("deliberating", "pass_gates", {
   target: "controlled",
@@ -103,8 +104,9 @@ entry("controlled", "execute", {
 });
 entry("controlled", "fail_execution", { target: "failed" });
 
-// failed → controlled (retry)
+// failed → controlled (retry) | rejected (abandon)
 entry("failed", "retry", { target: "controlled" });
+entry("failed", "abandon", { target: "rejected" });
 
 // terminal: archive is idempotent
 entry("executed", "archive", { target: "executed" });

@@ -10,8 +10,59 @@ import type {
   PipelineStage,
 } from "../types.js";
 import { PROPOSAL_TYPE_LABELS } from "../types.js";
-import { STAGE_TO_STATUS } from "./lifecycle.js";
 import { getState, setState } from "../persistence.js";
+import { transitionProposal } from "../shell/lifecycle-manager.js";
+import type { ProposalEvent, GuardContext } from "../core/states.js";
+
+// ── Status → Event Mapping (for deprecated wrapper) ──────────
+
+/**
+ * Map a target status to the FSM event and guard context needed
+ * to reach it from the current status. Used by the deprecated
+ * `updateProposalStatus()` wrapper to delegate to the FSM.
+ */
+const statusToEvent = (
+  from: ProposalStatus,
+  to: ProposalStatus,
+): { event: ProposalEvent; ctx: Partial<GuardContext> } => {
+  const map: Record<
+    string,
+    { event: ProposalEvent; ctx: Partial<GuardContext> }
+  > = {
+    // open → deliberating
+    "open:deliberating": { event: "deliberate", ctx: {} },
+    // deliberating → approved
+    "deliberating:approved": { event: "approve", ctx: { quorumMet: true } },
+    // deliberating → rejected
+    "deliberating:rejected": {
+      event: "reject",
+      ctx: { quorumMet: false, hasVotes: true },
+    },
+    // deliberating → controlled (shortcut)
+    "deliberating:controlled": {
+      event: "pass_gates",
+      ctx: { quorumMet: true, gatesPassed: true },
+    },
+    // approved → controlled
+    "approved:controlled": { event: "pass_gates", ctx: { gatesPassed: true } },
+    // approved → rejected
+    "approved:rejected": { event: "reject", ctx: {} },
+    // controlled → executed
+    "controlled:executed": { event: "execute", ctx: { gatesPassed: true } },
+    // controlled → failed
+    "controlled:failed": { event: "fail_execution", ctx: {} },
+    // failed → controlled (retry)
+    "failed:controlled": { event: "retry", ctx: {} },
+  };
+
+  const result = map[`${from}:${to}`];
+  if (!result) {
+    throw new Error(
+      `Unknown status transition mapping: "${from}" → "${to}". Use transitionProposal() directly with the correct FSM event.`,
+    );
+  }
+  return result;
+};
 
 /**
  * Create a new structured proposal.
@@ -23,7 +74,7 @@ export const createProposal = (
   description: string,
   proposedBy: string = "user",
   context?: string,
-  content?: Partial<ProposalContent>
+  content?: Partial<ProposalContent>,
 ): Proposal => {
   const state = getState();
 
@@ -85,39 +136,59 @@ export const listProposals = (status?: ProposalStatus): Proposal[] => {
 
 /**
  * Update a proposal's status.
+ *
+ * @deprecated Use `transitionProposal()` from the lifecycle manager instead.
+ * This wrapper delegates to `transitionProposal()` internally, mapping the
+ * target status to the appropriate FSM event. Will be removed in Phase 2.
  */
-export const updateProposalStatus = (
+export const updateProposalStatus = async (
   id: number,
-  status: ProposalStatus
-): Proposal => {
+  status: ProposalStatus,
+): Promise<Proposal> => {
   const state = getState();
   const proposal = state.proposals.find((p) => p.id === id);
   if (!proposal) throw new Error(`Proposal #${id} not found`);
 
-  proposal.status = status;
+  const from = proposal.status;
 
-  if (["approved", "rejected", "executed", "failed"].includes(status)) {
-    proposal.resolvedAt = new Date().toISOString();
+  // If already at target status, return early (idempotent)
+  if (from === status) return proposal;
+
+  // Map target status → FSM event + guard context
+  const result = statusToEvent(from, status);
+
+  // Delegate to transitionProposal
+  const transitionResult = await transitionProposal(id, result.event, {
+    status: from,
+    ...result.ctx,
+  });
+
+  if (!transitionResult.success) {
+    throw new Error(
+      `Cannot transition proposal #${id} from "${from}" to "${status}": ${transitionResult.error}`,
+    );
   }
 
-  setState(state);
-  return proposal;
+  // Return the updated proposal
+  return getState().proposals.find((p) => p.id === id)!;
 };
 
 /**
  * Update a proposal's pipeline stage.
- * Also updates the legacy status to match.
+ *
+ * NOTE: This only updates the pipeline stage metadata.
+ * Status changes must go through `transitionProposal()` to be
+ * validated by the XState machine, fire hooks, and record audit.
  */
 export const updatePipelineStage = (
   id: number,
-  stage: PipelineStage
+  stage: PipelineStage,
 ): Proposal => {
   const state = getState();
   const proposal = state.proposals.find((p) => p.id === id);
   if (!proposal) throw new Error(`Proposal #${id} not found`);
 
   proposal.stage = stage;
-  proposal.status = STAGE_TO_STATUS[stage];
 
   if (stage === "postmortem") {
     proposal.resolvedAt = new Date().toISOString();
@@ -134,7 +205,7 @@ export const storeDeliberationResults = (
   id: number,
   agentOutputs: import("../types.js").AgentOutput[],
   synthesis: string,
-  votes: import("../types.js").Vote[]
+  votes: import("../types.js").Vote[],
 ): Proposal => {
   const state = getState();
   const proposal = state.proposals.find((p) => p.id === id);
@@ -149,6 +220,12 @@ export const storeDeliberationResults = (
 
 /**
  * Store execution result on a proposal.
+ *
+ * NOTE: This only stores the execution result data.
+ * Status changes (e.g. controlled → executed) must go through
+ * `transitionProposal()` to be validated by the XState machine,
+ * fire hooks, and record audit. The caller is responsible for
+ * calling `transitionProposal(id, "execute", ...)` separately.
  */
 export const storeExecutionResult = (id: number, result: string): Proposal => {
   const state = getState();
@@ -156,9 +233,6 @@ export const storeExecutionResult = (id: number, result: string): Proposal => {
   if (!proposal) throw new Error(`Proposal #${id} not found`);
 
   proposal.executionResult = result;
-  proposal.status = "executed";
-  proposal.stage = "postmortem";
-  proposal.resolvedAt = new Date().toISOString();
   setState(state);
   return proposal;
 };
@@ -168,7 +242,7 @@ export const storeExecutionResult = (id: number, result: string): Proposal => {
  */
 export const storeCompositeScore = (
   id: number,
-  score: import("../types.js").CompositeScore
+  score: import("../types.js").CompositeScore,
 ): Proposal => {
   const state = getState();
   const proposal = state.proposals.find((p) => p.id === id);
@@ -192,7 +266,12 @@ export const formatProposal = (proposal: Proposal): string => {
 
   // Risk zone badge
   if (proposal.riskZone) {
-    const zoneLabel = proposal.riskZone === "red" ? "🔴 Red" : proposal.riskZone === "orange" ? "🟠 Orange" : "🟢 Green";
+    const zoneLabel =
+      proposal.riskZone === "red"
+        ? "🔴 Red"
+        : proposal.riskZone === "orange"
+          ? "🟠 Orange"
+          : "🟢 Green";
     lines.push(`**Risk Zone:** ${zoneLabel}`);
   }
 
@@ -250,8 +329,11 @@ export const formatProposal = (proposal: Proposal): string => {
     lines.push("| Agent | Position | Weight | Reasoning |");
     lines.push("|-------|----------|--------|-----------|");
     for (const v of proposal.votes) {
-      const emoji = v.position === "for" ? "✅" : v.position === "against" ? "❌" : "⏸️";
-      lines.push(`| ${v.agentName} | ${emoji} ${v.position} | ${v.weight} | ${v.reasoning} |`);
+      const emoji =
+        v.position === "for" ? "✅" : v.position === "against" ? "❌" : "⏸️";
+      lines.push(
+        `| ${v.agentName} | ${emoji} ${v.position} | ${v.weight} | ${v.reasoning} |`,
+      );
     }
   }
 
@@ -269,7 +351,11 @@ export const formatProposalsList = (proposals: Proposal[]): string => {
   const rows = proposals
     .map((p) => {
       const zone = p.riskZone
-        ? p.riskZone === "red" ? "🔴" : p.riskZone === "orange" ? "🟠" : "🟢"
+        ? p.riskZone === "red"
+          ? "🔴"
+          : p.riskZone === "orange"
+            ? "🟠"
+            : "🟢"
         : "⚪";
       const score = p.compositeScore ? `${p.compositeScore.weighted}` : "—";
       return `| ${p.id} | ${p.title} | ${PROPOSAL_TYPE_LABELS[p.type]} | ${p.status} | ${zone} | ${score} | ${p.stage} | ${p.proposedBy} | ${p.createdAt.split("T")[0]} |`;

@@ -7,3 +7,5 @@ export type { ProposalEvent, GuardContext, Guard, RejectionReason, TransitionDef
 export { evaluateTransition, getAllowedTransitions, getAllTargets, isTerminal, assertTransition } from "./evaluate.js";
 export type { TransitionResult, TransitionOK, TransitionRejected } from "./evaluate.js";
 export { generateMermaidDiagram, generateDiagramMarkdown } from "./diagram.js";
+export { proposalMachine } from "./machine.js";
+export type { MachineContext, MachineEvents, MachineInput } from "./machine.js";
