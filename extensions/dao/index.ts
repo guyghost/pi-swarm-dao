@@ -695,12 +695,18 @@ export default function daoExtension(pi: ExtensionAPI) {
       if (result.success) {
         proposal.amendmentState = "executed";
         proposal.preAmendmentSnapshot = result.snapshot;
-        const amendmentExecResult = await transitionProposal(proposal.id, "execute", {
-          status: proposal.status,
-          gatesPassed: true,
-        });
+        const amendmentExecResult = await transitionProposal(
+          proposal.id,
+          "execute",
+          {
+            status: proposal.status,
+            gatesPassed: true,
+          },
+        );
         if (!amendmentExecResult.success) {
-          throw new Error(`FSM transition failed (execute amendment): ${amendmentExecResult.error}`);
+          throw new Error(
+            `FSM transition failed (execute amendment): ${amendmentExecResult.error}`,
+          );
         }
 
         recordAudit(
@@ -1157,7 +1163,10 @@ export default function daoExtension(pi: ExtensionAPI) {
         );
       }
 
-      const updatedProposal = updateProposalStructuredFields(proposal.id, updates);
+      const updatedProposal = updateProposalStructuredFields(
+        proposal.id,
+        updates,
+      );
       const qualityValidation = validateProposalQuality(updatedProposal);
 
       recordAudit(
@@ -1237,11 +1246,17 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       // Transition to deliberating
-      const deliberateTransitionResult = await transitionProposal(proposal.id, "deliberate", {
-        status: proposal.status,
-      });
+      const deliberateTransitionResult = await transitionProposal(
+        proposal.id,
+        "deliberate",
+        {
+          status: proposal.status,
+        },
+      );
       if (!deliberateTransitionResult.success) {
-        return toolResult(`❌ Cannot start deliberation: ${deliberateTransitionResult.error}`);
+        return toolResult(
+          `❌ Cannot start deliberation: ${deliberateTransitionResult.error}`,
+        );
       }
 
       recordAudit(
@@ -1380,7 +1395,9 @@ export default function daoExtension(pi: ExtensionAPI) {
         }),
       );
       if (!tallyResult.success) {
-        return toolResult(`❌ Deliberation tally transition failed (${newStatus}): ${tallyResult.error}`);
+        return toolResult(
+          `❌ Deliberation tally transition failed (${newStatus}): ${tallyResult.error}`,
+        );
       }
 
       const durationMs = Date.now() - startTime;
@@ -1463,7 +1480,9 @@ export default function daoExtension(pi: ExtensionAPI) {
       return `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`;
     }
 
-    onProgress?.(`🛡️ Running control gates on proposal #${proposal.id}: ${proposal.title}...`);
+    onProgress?.(
+      `🛡️ Running control gates on proposal #${proposal.id}: ${proposal.title}...`,
+    );
 
     const controlResult = runGates(proposal);
     const checklist = generateChecklist(proposal);
@@ -1471,10 +1490,14 @@ export default function daoExtension(pi: ExtensionAPI) {
     const stats = checklistStats(checklist);
 
     if (controlResult.allGatesPassed && proposal.status !== "controlled") {
-      const gatesTransitionResult = await transitionProposal(proposal.id, "pass_gates", {
-        status: proposal.status,
-        gatesPassed: true,
-      });
+      const gatesTransitionResult = await transitionProposal(
+        proposal.id,
+        "pass_gates",
+        {
+          status: proposal.status,
+          gatesPassed: true,
+        },
+      );
       if (!gatesTransitionResult.success) {
         return `❌ Control gates passed but FSM transition failed: ${gatesTransitionResult.error}`;
       }
@@ -1550,12 +1573,18 @@ export default function daoExtension(pi: ExtensionAPI) {
       storeExecutionResult(proposal.id, result);
 
       proposal.stage = "postmortem";
-      const execTransitionResult = await transitionProposal(proposal.id, "execute", {
-        status: proposal.status,
-        gatesPassed: true,
-      });
+      const execTransitionResult = await transitionProposal(
+        proposal.id,
+        "execute",
+        {
+          status: proposal.status,
+          gatesPassed: true,
+        },
+      );
       if (!execTransitionResult.success) {
-        throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
+        throw new Error(
+          `FSM transition failed (execute): ${execTransitionResult.error}`,
+        );
       }
 
       recordAudit(
@@ -1744,18 +1773,22 @@ export default function daoExtension(pi: ExtensionAPI) {
     promptSnippet:
       "dao_execute — Execute an approved proposal via the Delivery Agent",
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-      const result = await runProposalExecution(params.proposalId, ctx, (message) => {
-        if (!onUpdate) return;
-        onUpdate({
-          content: [
-            {
-              type: "text" as const,
-              text: message,
-            },
-          ],
-          details: {},
-        });
-      });
+      const result = await runProposalExecution(
+        params.proposalId,
+        ctx,
+        (message) => {
+          if (!onUpdate) return;
+          onUpdate({
+            content: [
+              {
+                type: "text" as const,
+                text: message,
+              },
+            ],
+            details: {},
+          });
+        },
+      );
 
       return toolResult(result);
     },
@@ -2087,13 +2120,15 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const problemStatementInput = await ctx.ui.editor(
         "Problem Statement",
-        proposal.problemStatement ?? "Describe the problem, for whom, and why it matters. Leave unchanged if already correct.",
+        proposal.problemStatement ??
+          "Describe the problem, for whom, and why it matters. Leave unchanged if already correct.",
       );
       if (problemStatementInput == null) return;
 
       const acceptanceCriteriaInput = await ctx.ui.editor(
         "Acceptance Criteria",
-        proposal.acceptanceCriteria?.map((c) => c.then).join("\n") ?? "One acceptance criterion per line.",
+        proposal.acceptanceCriteria?.map((c) => c.then).join("\n") ??
+          "One acceptance criterion per line.",
       );
       if (acceptanceCriteriaInput == null) return;
 
@@ -2105,7 +2140,8 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const rollbackConditionsInput = await ctx.ui.editor(
         "Rollback Conditions",
-        proposal.rollbackConditions?.join("\n") ?? "One rollback condition per line.",
+        proposal.rollbackConditions?.join("\n") ??
+          "One rollback condition per line.",
       );
       if (rollbackConditionsInput == null) return;
 
@@ -2146,7 +2182,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           `# 📝 Proposal Updated — #${updatedProposal.id}\n\n` +
           `**Title:** ${updatedProposal.title}\n\n` +
           `${summary}` +
-          (!qualityValidation.valid ? `\n\n${qualityValidation.template}` : "") +
+          (!qualityValidation.valid
+            ? `\n\n${qualityValidation.template}`
+            : "") +
           `\n\nNext: run \`/dao:deliberate ${updatedProposal.id}\` when ready.`,
         display: true,
       });
@@ -2344,11 +2382,17 @@ export default function daoExtension(pi: ExtensionAPI) {
         const startTime = Date.now();
         try {
           // Transition to deliberating
-          const batchDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
-            status: proposal.status,
-          });
+          const batchDeliberateResult = await transitionProposal(
+            proposal.id,
+            "deliberate",
+            {
+              status: proposal.status,
+            },
+          );
           if (!batchDeliberateResult.success) {
-            throw new Error(`FSM transition failed (deliberate): ${batchDeliberateResult.error}`);
+            throw new Error(
+              `FSM transition failed (deliberate): ${batchDeliberateResult.error}`,
+            );
           }
           ghUpdateStatus(proposal);
           recordAudit(
@@ -2426,7 +2470,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             }),
           );
           if (!batchTallyResult.success) {
-            throw new Error(`FSM transition failed (${newStatus}): ${batchTallyResult.error}`);
+            throw new Error(
+              `FSM transition failed (${newStatus}): ${batchTallyResult.error}`,
+            );
           }
           if (newStatus === "approved") {
             proposal.riskZone = classifyRiskZone(proposal);
@@ -2777,7 +2823,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const eligible = state.proposals.filter(
-        (p) => p.status === "approved" || p.status === "controlled" || p.status === "failed",
+        (p) =>
+          p.status === "approved" ||
+          p.status === "controlled" ||
+          p.status === "failed",
       );
 
       if (eligible.length === 0) {
@@ -2862,7 +2911,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const eligible = state.proposals.filter(
-        (p) => p.status === "approved" || p.status === "controlled" || p.status === "executed",
+        (p) =>
+          p.status === "approved" ||
+          p.status === "controlled" ||
+          p.status === "executed",
       );
 
       if (eligible.length === 0) {
@@ -2931,7 +2983,9 @@ export default function daoExtension(pi: ExtensionAPI) {
         return;
       }
 
-      const deliveryOutput = proposal.agentOutputs.find((o) => o.agentId === "delivery");
+      const deliveryOutput = proposal.agentOutputs.find(
+        (o) => o.agentId === "delivery",
+      );
       const plan = parseDeliveryPlan(
         proposal.id,
         deliveryOutput?.content ?? proposal.description,
@@ -3031,9 +3085,10 @@ export default function daoExtension(pi: ExtensionAPI) {
         }
       }
 
-      let proposal = parsedId !== undefined
-        ? eligible.find((p) => p.id === parsedId)
-        : undefined;
+      let proposal =
+        parsedId !== undefined
+          ? eligible.find((p) => p.id === parsedId)
+          : undefined;
 
       if (parsedId !== undefined && !proposal) {
         const existing = getProposal(parsedId);
@@ -3063,7 +3118,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       let artefacts = state.artefacts[proposal.id];
       if (!artefacts) {
         if (ctx.hasUI) {
-          ctx.ui.notify(`📚 Generating artefacts for #${proposal.id}...`, "info");
+          ctx.ui.notify(
+            `📚 Generating artefacts for #${proposal.id}...`,
+            "info",
+          );
         }
         const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
         const controlResult = state.controlResults[proposal.id];
@@ -3140,7 +3198,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const eligible = state.proposals.filter(
-        (p) => p.status === "executed" || p.status === "failed" || p.status === "controlled",
+        (p) =>
+          p.status === "executed" ||
+          p.status === "failed" ||
+          p.status === "controlled",
       );
 
       if (eligible.length === 0) {
@@ -3318,11 +3379,17 @@ export default function daoExtension(pi: ExtensionAPI) {
         if (!skipDeliberate) {
           reportProgress("Deliberate", "Starting swarm deliberation...");
 
-          const shipDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
-            status: proposal.status,
-          });
+          const shipDeliberateResult = await transitionProposal(
+            proposal.id,
+            "deliberate",
+            {
+              status: proposal.status,
+            },
+          );
           if (!shipDeliberateResult.success) {
-            throw new Error(`FSM transition failed (deliberate): ${shipDeliberateResult.error}`);
+            throw new Error(
+              `FSM transition failed (deliberate): ${shipDeliberateResult.error}`,
+            );
           }
           ghUpdateStatus(proposal);
           recordAudit(
@@ -3392,7 +3459,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             }),
           );
           if (!tallyTransitionResult.success) {
-            throw new Error(`FSM transition failed (${deliberationStatus}): ${tallyTransitionResult.error}`);
+            throw new Error(
+              `FSM transition failed (${deliberationStatus}): ${tallyTransitionResult.error}`,
+            );
           }
           if (deliberationStatus === "approved") {
             proposal.riskZone = classifyRiskZone(proposal);
@@ -3448,12 +3517,18 @@ export default function daoExtension(pi: ExtensionAPI) {
           controlResultValue.checklist = checklist;
 
           if (controlResultValue.allGatesPassed) {
-            const gatesResult = await transitionProposal(proposal.id, "pass_gates", {
-              status: proposal.status,
-              gatesPassed: true,
-            });
+            const gatesResult = await transitionProposal(
+              proposal.id,
+              "pass_gates",
+              {
+                status: proposal.status,
+                gatesPassed: true,
+              },
+            );
             if (!gatesResult.success) {
-              throw new Error(`FSM transition failed (pass_gates): ${gatesResult.error}`);
+              throw new Error(
+                `FSM transition failed (pass_gates): ${gatesResult.error}`,
+              );
             }
           }
 
@@ -3491,7 +3566,9 @@ export default function daoExtension(pi: ExtensionAPI) {
 
         // ── STEP 3: EXECUTE ──────────────────────────────────────
         reportProgress("Execute", "Delegating to delivery agent...");
-        ctx.ui.setWorkingMessage?.("DAO: Executing proposal (⏳ this may take up to 5 minutes)...");
+        ctx.ui.setWorkingMessage?.(
+          "DAO: Executing proposal (⏳ this may take up to 5 minutes)...",
+        );
 
         captureSnapshot(proposal.id);
         const executionResult = await executeProposal(proposal, undefined);
@@ -3499,7 +3576,9 @@ export default function daoExtension(pi: ExtensionAPI) {
         ctx.ui.setWorkingMessage?.(); // Restore default
 
         if (!executionResult || executionResult === "(no execution output)") {
-          throw new Error("Execution produced no output — delivery agent returned empty result");
+          throw new Error(
+            "Execution produced no output — delivery agent returned empty result",
+          );
         }
 
         reportProgress("Execute", "Delivery plan generated, finalizing...");
@@ -3507,12 +3586,18 @@ export default function daoExtension(pi: ExtensionAPI) {
 
         // Transition through FSM: controlled → executed
         proposal.stage = "postmortem";
-        const execTransitionResult = await transitionProposal(proposal.id, "execute", {
-          status: proposal.status,
-          gatesPassed: true,
-        });
+        const execTransitionResult = await transitionProposal(
+          proposal.id,
+          "execute",
+          {
+            status: proposal.status,
+            gatesPassed: true,
+          },
+        );
         if (!execTransitionResult.success) {
-          throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
+          throw new Error(
+            `FSM transition failed (execute): ${execTransitionResult.error}`,
+          );
         }
         ghUpdateStatus(proposal);
         ghAddExecution(proposal, executionResult);
@@ -3584,7 +3669,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:hello — First-Run Onboarding (Proposal #10)
   // ================================================================
 
-  registerDaoCommandAliases(["dao:hello", "dao hello"], {
+  registerDaoCommandAliases(["dao:hello"], {
     description:
       "Guided first-run onboarding: meet the agents, create your first proposal, see deliberation in action",
     async handler(_args: string, ctx: ExtensionCommandContext) {
@@ -3784,7 +3869,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:quickstart — Guided First Proposal (Proposal #9)
   // ================================================================
 
-  registerDaoCommandAliases(["dao:quickstart", "dao quickstart"], {
+  registerDaoCommandAliases(["dao:quickstart"], {
     description:
       "Run a full DAO pipeline demo: propose → deliberate → check → artefacts (~3-5 min)",
     async handler(_args: string, ctx: ExtensionCommandContext) {
@@ -3856,11 +3941,17 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // ── STEP 2: Deliberate ─────────────────────────────────
       try {
-        const qsDeliberateResult = await transitionProposal(proposal.id, "deliberate", {
-          status: proposal.status,
-        });
+        const qsDeliberateResult = await transitionProposal(
+          proposal.id,
+          "deliberate",
+          {
+            status: proposal.status,
+          },
+        );
         if (!qsDeliberateResult.success) {
-          throw new Error(`FSM transition failed (deliberate): ${qsDeliberateResult.error}`);
+          throw new Error(
+            `FSM transition failed (deliberate): ${qsDeliberateResult.error}`,
+          );
         }
         ghUpdateStatus(proposal);
         recordAudit(
@@ -3934,7 +4025,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           }),
         );
         if (!qsTallyResult.success) {
-          throw new Error(`FSM transition failed (${newStatus}): ${qsTallyResult.error}`);
+          throw new Error(
+            `FSM transition failed (${newStatus}): ${qsTallyResult.error}`,
+          );
         }
         if (newStatus === "approved")
           proposal.riskZone = classifyRiskZone(proposal);
@@ -3996,12 +4089,18 @@ export default function daoExtension(pi: ExtensionAPI) {
         controlResult.checklist = checklist;
 
         if (controlResult.allGatesPassed) {
-          const qsGatesResult = await transitionProposal(proposal.id, "pass_gates", {
-            status: proposal.status,
-            gatesPassed: true,
-          });
+          const qsGatesResult = await transitionProposal(
+            proposal.id,
+            "pass_gates",
+            {
+              status: proposal.status,
+              gatesPassed: true,
+            },
+          );
           if (!qsGatesResult.success) {
-            throw new Error(`FSM transition failed (pass_gates): ${qsGatesResult.error}`);
+            throw new Error(
+              `FSM transition failed (pass_gates): ${qsGatesResult.error}`,
+            );
           }
         }
 
