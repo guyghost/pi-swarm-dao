@@ -28,13 +28,16 @@
 │   └── TEMPLATE.md
 ├── release-packets/       — Release packets per version
 │   └── README.md
+├── implementation-plans/  — Generated implementation plans per proposal
+├── test-plans/            — Generated test plans per proposal
 ├── scorecards/            — Agent performance scorecards
 │   └── TEMPLATE.md
 └── policies/              — DAO policies and procedures
     ├── PROPOSAL-LIFECYCLE.md
     ├── RISK-ZONES.md
     ├── QUORUM.md
-    └── AMENDMENT.md
+    ├── AMENDMENT.md
+    └── GITHUB-FIRST-SOURCE-OF-TRUTH.md
 ```
 
 ## 4-Layer Architecture
@@ -51,6 +54,7 @@
 - [DAO Charter](charter/CHARTER.md) — Mission, principles, governance model
 - [Agent Registry](agents/README.md) — All 7 agent cards
 - [Proposal Lifecycle](policies/PROPOSAL-LIFECYCLE.md) — From intake to execution
+- [GitHub-First Source of Truth](policies/GITHUB-FIRST-SOURCE-OF-TRUTH.md) — Canonical persistence model for proposals, events, and artefacts
 - [Risk Zones](policies/RISK-ZONES.md) — Green / Orange / Red classification
 - [Quorum Policy](policies/QUORUM.md) — Participation and approval thresholds
 - [Self-Amendment](policies/AMENDMENT.md) — Changing the DAO from within

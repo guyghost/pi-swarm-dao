@@ -11,6 +11,8 @@
 // 7. Release Packet   — publication-ready bundle
 // ============================================================
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type {
   Proposal,
   AgentOutput,
@@ -27,8 +29,11 @@ import type {
   ReleasePacket,
   DAOArtefacts,
   AgentRiskLevel,
+  ArtefactFileIndex,
+  HostProjectContext,
 } from "../types.js";
 import { PROPOSAL_TYPE_LABELS } from "../types.js";
+import { detectHostContext } from "../host-context.js";
 
 // ---------------------------------------------------------------------------
 // Extraction Helpers
@@ -991,8 +996,103 @@ export const formatArtefactsSummary = (artefacts: DAOArtefacts): string => {
     `| 5 | 🗂️ Implementation Plan (${artefacts.implementationPlan.phases.length} phases) | ✅ Generated |`,
     `| 6 | 🧪 Test Plan (${artefacts.testPlan.unitTests.length} unit, ${artefacts.testPlan.e2eTests.length} E2E) | ✅ Generated |`,
     `| 7 | 📦 Release Packet (v${artefacts.releasePacket.version}) | ✅ Generated |`,
-    "",
-    `> Run \`dao_artefacts\` with proposalId ${artefacts.proposalId} to view full details.`,
   ];
+
+  if (artefacts.files) {
+    lines.push("", "### Repository Files");
+    lines.push(`- Decision Brief: \`${artefacts.files.decisionBrief.path}\``);
+    lines.push(`- ADR: \`${artefacts.files.adr.path}\``);
+    lines.push(`- Risk Report: \`${artefacts.files.riskReport.path}\``);
+    lines.push(`- PRD Lite: \`${artefacts.files.prdLite.path}\``);
+    lines.push(`- Implementation Plan: \`${artefacts.files.implementationPlan.path}\``);
+    lines.push(`- Test Plan: \`${artefacts.files.testPlan.path}\``);
+    lines.push(`- Release Packet: \`${artefacts.files.releasePacket.path}\``);
+  }
+
+  lines.push("", `> Run \`dao_artefacts\` with proposalId ${artefacts.proposalId} to view full details.`);
   return lines.join("\n");
+};
+
+const slugify = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "proposal";
+
+const padId = (value: number): string => String(value).padStart(3, "0");
+
+const buildBlobUrl = (hostCtx: HostProjectContext, path: string): string | undefined => {
+  if (
+    hostCtx.repoOwner === "unknown" ||
+    hostCtx.repoName === "unknown" ||
+    hostCtx.branch === "unknown"
+  ) {
+    return undefined;
+  }
+
+  const encodedBranch = encodeURIComponent(hostCtx.branch).replace(/%2F/g, "/");
+  return `https://github.com/${hostCtx.repoSlug}/blob/${encodedBranch}/${path}`;
+};
+
+export const buildArtefactFileIndex = (
+  proposal: Proposal,
+  hostCtx: HostProjectContext = detectHostContext(),
+): ArtefactFileIndex => {
+  const id = padId(proposal.id);
+  const slug = slugify(proposal.title);
+  const decisionPath = `docs/dao/decisions/${id}-${slug}.md`;
+  const adrPath = `docs/dao/adr/ADR-${id}-${slug}.md`;
+  const riskPath = `docs/dao/risk-register/${id}-${slug}-risk-report.md`;
+  const prdPath = `docs/dao/proposals/${id}-${slug}-prd-lite.md`;
+  const implementationPath = `docs/dao/implementation-plans/${id}-${slug}.md`;
+  const testPath = `docs/dao/test-plans/${id}-${slug}.md`;
+  const releasePath = `docs/dao/release-packets/${id}-${slug}.md`;
+
+  return {
+    decisionBrief: { path: decisionPath, url: buildBlobUrl(hostCtx, decisionPath) },
+    adr: { path: adrPath, url: buildBlobUrl(hostCtx, adrPath) },
+    riskReport: { path: riskPath, url: buildBlobUrl(hostCtx, riskPath) },
+    prdLite: { path: prdPath, url: buildBlobUrl(hostCtx, prdPath) },
+    implementationPlan: { path: implementationPath, url: buildBlobUrl(hostCtx, implementationPath) },
+    testPlan: { path: testPath, url: buildBlobUrl(hostCtx, testPath) },
+    releasePacket: { path: releasePath, url: buildBlobUrl(hostCtx, releasePath) },
+  };
+};
+
+export const writeArtefactFiles = (
+  proposal: Proposal,
+  artefacts: DAOArtefacts,
+  hostCtx: HostProjectContext = detectHostContext(),
+): ArtefactFileIndex => {
+  const files = buildArtefactFileIndex(proposal, hostCtx);
+  const docs = {
+    decisionBrief: formatDecisionBrief(artefacts.decisionBrief),
+    adr: formatADR(artefacts.adr),
+    riskReport: formatRiskReport(artefacts.riskReport),
+    prdLite: formatPRDLite(artefacts.prdLite),
+    implementationPlan: formatImplementationPlan(artefacts.implementationPlan),
+    testPlan: formatTestPlan(artefacts.testPlan),
+    releasePacket: formatReleasePacket(artefacts.releasePacket),
+  };
+
+  const entries: Array<[keyof ArtefactFileIndex, string]> = [
+    ["decisionBrief", docs.decisionBrief],
+    ["adr", docs.adr],
+    ["riskReport", docs.riskReport],
+    ["prdLite", docs.prdLite],
+    ["implementationPlan", docs.implementationPlan],
+    ["testPlan", docs.testPlan],
+    ["releasePacket", docs.releasePacket],
+  ];
+
+  for (const [key, content] of entries) {
+    const file = files[key];
+    const absolutePath = join(hostCtx.rootDir, file.path);
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, content + "\n", "utf-8");
+  }
+
+  artefacts.files = files;
+  return files;
 };

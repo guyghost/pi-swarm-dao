@@ -37,6 +37,18 @@ open → deliberating → approved → controlled → executed
 | `failed` | `controlled` (retry) |
 | `rejected`, `executed` | — (terminal) |
 
+## Persistence Model
+
+The DAO uses a **GitHub-first persistence model**:
+
+- proposal = GitHub issue
+- proposal ID = issue number
+- status/type/zone = GitHub labels
+- lifecycle events = structured GitHub issue comments
+- durable artefacts = versioned files under `docs/dao/`
+
+See [GitHub-First Source of Truth](GITHUB-FIRST-SOURCE-OF-TRUTH.md) for the canonical policy.
+
 ## Deliberation Flow
 
 1. **Propose** — User creates a proposal via `dao_propose`

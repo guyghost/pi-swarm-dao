@@ -10,6 +10,7 @@ import { getState, setState, restoreState, toolResult } from "./persistence.js";
 
 // Types
 import type {
+  Proposal,
   ProposalType,
   AgentRiskLevel,
   DAOArtefacts,
@@ -112,13 +113,18 @@ import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
 
 // GitHub Issues Persistence
 import {
-  ghCreateProposal,
+  ghCreateProposalDraft,
+  ghSyncProposal,
   ghUpdateStatus,
   ghAddDeliberation,
   ghAddControlResult,
   ghAddExecution,
   ghAddArtefacts,
   ghAddPlan,
+  ghAddVerification,
+  ghAddOutcome,
+  ghAddSnapshot,
+  ghAddRollback,
   ghRestoreState,
   getIssueNumber,
   ghCloseImplemented,
@@ -140,6 +146,7 @@ import {
   formatImplementationPlan,
   formatTestPlan,
   formatReleasePacket,
+  writeArtefactFiles,
 } from "./delivery/artefacts.js";
 
 // Layer 4: Control
@@ -170,6 +177,47 @@ import {
   renderProposalCard,
   parseFilterArgs,
 } from "./render-pipeline.js";
+
+const createCanonicalProposal = (
+  title: string,
+  type: ProposalType,
+  description: string,
+  proposedBy: string = "user",
+  context?: string,
+  content?: Partial<ProposalContent>,
+) => {
+  const issueNumber = ghCreateProposalDraft(
+    title,
+    type,
+    description,
+    proposedBy,
+    context,
+  );
+
+  const proposal = createProposal(
+    title,
+    type,
+    description,
+    proposedBy,
+    context,
+    content,
+    issueNumber ?? undefined,
+  );
+
+  ghSyncProposal(proposal);
+  return proposal;
+};
+
+const persistArtefactsToRepo = (
+  proposal: Proposal,
+  artefacts: DAOArtefacts,
+) => {
+  const files = writeArtefactFiles(proposal, artefacts);
+  const state = getState();
+  state.artefacts[proposal.id] = artefacts;
+  setState(state);
+  return files;
+};
 
 export default function daoExtension(pi: ExtensionAPI) {
   const registerDaoCommandAliases = (
@@ -558,7 +606,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       };
 
       // Create a governance-change proposal with the amendment attached
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         params.title,
         "governance-change" as ProposalType,
         params.description,
@@ -575,6 +623,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Classify risk zone (amendment-aware)
       const zone = classifyRiskZone(proposal);
       proposal.riskZone = zone;
+      ghSyncProposal(proposal);
 
       // Audit
       recordAudit(
@@ -822,7 +871,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const changeDesc = Object.entries(changes)
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ");
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         `Update agent ${agent.name}: ${changeDesc}`,
         "governance-change" as ProposalType,
         `Proposed changes to agent "${agent.name}" (${params.agentId}): ${changeDesc}`,
@@ -833,6 +882,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposal.amendmentOrigin = { source: "human" };
       proposal.amendmentState = "pending-vote";
       proposal.riskZone = classifyRiskZone(proposal);
+      ghSyncProposal(proposal);
 
       recordAudit(
         proposal.id,
@@ -937,7 +987,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const changeDesc = Object.entries(changes)
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ");
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         `Update DAO config: ${changeDesc}`,
         "governance-change" as ProposalType,
         `Proposed configuration changes: ${changeDesc}`,
@@ -948,6 +998,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       proposal.amendmentOrigin = { source: "human" };
       proposal.amendmentState = "pending-vote";
       proposal.riskZone = classifyRiskZone(proposal);
+      ghSyncProposal(proposal);
 
       recordAudit(
         proposal.id,
@@ -1024,7 +1075,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         return toolResult("DAO not initialized. Run `dao_setup` first.");
       }
 
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         params.title,
         params.type as ProposalType,
         params.description,
@@ -1048,6 +1099,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Classify risk zone
       const zone = classifyRiskZone(proposal);
       proposal.riskZone = zone;
+      ghSyncProposal(proposal);
 
       // Audit
       recordAudit(
@@ -1058,8 +1110,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         `Proposal "${params.title}" created via dao_propose tool`,
       );
 
-      // GitHub Issue — persist proposal
-      const ghIssue = ghCreateProposal(proposal);
+      const ghIssue = getIssueNumber(proposal.id);
       const ghNote = ghIssue ? `\n**GitHub Issue:** #${ghIssue}` : "";
 
       const zoneLabel =
@@ -1167,6 +1218,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         proposal.id,
         updates,
       );
+      ghSyncProposal(updatedProposal);
       const qualityValidation = validateProposalQuality(updatedProposal);
 
       recordAudit(
@@ -1562,7 +1614,8 @@ export default function daoExtension(pi: ExtensionAPI) {
     onProgress?.(`🚀 Executing proposal #${proposal.id}: ${proposal.title}...`);
 
     try {
-      captureSnapshot(proposal.id);
+      const snapshot = captureSnapshot(proposal.id);
+      ghAddSnapshot(proposal, snapshot);
 
       ctx?.ui?.setWorkingMessage?.(
         "DAO: Executing proposal (⏳ this may take several minutes)...",
@@ -1600,6 +1653,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const verification = verifyExecution(proposal.id, [], process.cwd());
       const state = getState();
       state.verifications[proposal.id] = verification;
+      ghAddVerification(proposal, verification);
 
       recordAudit(
         proposal.id,
@@ -1871,9 +1925,11 @@ export default function daoExtension(pi: ExtensionAPI) {
           "system",
           `Generated 7 artefacts for proposal #${proposal.id}`,
         );
+      }
 
-        // GitHub Issue — persist artefacts summary
-        ghAddArtefacts(proposal, 7);
+      if (!artefacts.files) {
+        const files = persistArtefactsToRepo(proposal, artefacts);
+        ghAddArtefacts(proposal, 7, files);
       }
 
       // Return specific artefact or all
@@ -2040,7 +2096,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           )) ?? undefined;
       }
 
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         title,
         selectedType as ProposalType,
         description,
@@ -2162,6 +2218,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         successMetrics: toList(successMetricsText),
         rollbackConditions: toList(rollbackConditionsText),
       });
+      ghSyncProposal(updatedProposal);
 
       const qualityValidation = validateProposalQuality(updatedProposal);
       recordAudit(
@@ -2756,7 +2813,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         const proposalTitles = new Map<number, string>();
         for (const s of suggestions) {
           if (s.parsed) {
-            const proposal = createProposal(
+            const proposal = createCanonicalProposal(
               s.parsed.title,
               s.parsed.type,
               s.parsed.description,
@@ -2765,6 +2822,7 @@ export default function daoExtension(pi: ExtensionAPI) {
             );
             const zone = classifyRiskZone(proposal);
             proposal.riskZone = zone;
+            ghSyncProposal(proposal);
             proposalIds.set(s.agentId, proposal.id);
             proposalTitles.set(proposal.id, proposal.title);
 
@@ -2775,9 +2833,6 @@ export default function daoExtension(pi: ExtensionAPI) {
               s.agentId,
               `Proposal "${s.parsed.title}" created from round table suggestion by ${s.agentName}`,
             );
-
-            // Persist to GitHub
-            ghCreateProposal(proposal);
           }
         }
 
@@ -3138,7 +3193,11 @@ export default function daoExtension(pi: ExtensionAPI) {
           "system",
           `Generated 7 artefacts for proposal #${proposal.id}`,
         );
-        ghAddArtefacts(proposal, 7);
+      }
+
+      if (!artefacts.files) {
+        const files = persistArtefactsToRepo(proposal, artefacts);
+        ghAddArtefacts(proposal, 7, files);
       }
 
       let content: string;
@@ -3260,6 +3319,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const verification = verifyExecution(proposal.id, [], process.cwd());
       state.verifications[proposal.id] = verification;
+      ghAddVerification(proposal, verification);
 
       recordAudit(
         proposal.id,
@@ -3570,7 +3630,8 @@ export default function daoExtension(pi: ExtensionAPI) {
           "DAO: Executing proposal (⏳ this may take up to 5 minutes)...",
         );
 
-        captureSnapshot(proposal.id);
+        const snapshot = captureSnapshot(proposal.id);
+        ghAddSnapshot(proposal, snapshot);
         const executionResult = await executeProposal(proposal, undefined);
 
         ctx.ui.setWorkingMessage?.(); // Restore default
@@ -3783,7 +3844,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       const starterTitle = `Starter: Define ${projectGoal} priority for ${projectName}`;
 
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         starterTitle,
         proposalType as any,
         starterDescription,
@@ -3795,8 +3856,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // Mark as onboarding proposal
       (proposal as any).isDemo = true;
-
-      ghCreateProposal(proposal);
+      ghSyncProposal(proposal);
 
       pi.sendMessage({
         customType: "dao-hello",
@@ -3914,7 +3974,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         `**Solution:** Create a CONTRIBUTING.md with:\n- Development setup instructions\n- PR submission checklist\n- Code review expectations\n- Testing requirements\n- Commit message conventions\n\n` +
         `**Why Now:** Every day without contribution guidelines, potential contributors bounce. This is the single highest-leverage documentation investment for an open-source project.`;
 
-      const proposal = createProposal(
+      const proposal = createCanonicalProposal(
         sampleTitle,
         "product-feature",
         sampleDescription,
@@ -3924,8 +3984,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const zone = classifyRiskZone(proposal);
       proposal.riskZone = zone;
       (proposal as any).isDemo = true;
-
-      ghCreateProposal(proposal);
+      ghSyncProposal(proposal);
 
       pi.sendMessage({
         customType: "dao-quickstart",
@@ -4142,8 +4201,9 @@ export default function daoExtension(pi: ExtensionAPI) {
           plan,
         );
         state.artefacts[proposal.id] = artefacts;
+        const files = persistArtefactsToRepo(proposal, artefacts);
 
-        ghAddArtefacts(proposal, 7);
+        ghAddArtefacts(proposal, 7, files);
 
         pi.sendMessage({
           customType: "dao-quickstart",
@@ -4275,7 +4335,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       const proposalTitles = new Map<number, string>();
       for (const s of suggestions) {
         if (s.parsed) {
-          const proposal = createProposal(
+          const proposal = createCanonicalProposal(
             s.parsed.title,
             s.parsed.type,
             s.parsed.description,
@@ -4284,6 +4344,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           );
           const zone = classifyRiskZone(proposal);
           proposal.riskZone = zone;
+          ghSyncProposal(proposal);
           proposalIds.set(s.agentId, proposal.id);
           proposalTitles.set(proposal.id, proposal.title);
 
@@ -4294,9 +4355,6 @@ export default function daoExtension(pi: ExtensionAPI) {
             s.agentId,
             `Proposal "${s.parsed.title}" created from round table suggestion by ${s.agentName}`,
           );
-
-          // Persist to GitHub
-          ghCreateProposal(proposal);
         }
       }
 
@@ -4364,6 +4422,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Store verification result
       const state = getState();
       state.verifications[proposal.id] = verification;
+      ghAddVerification(proposal, verification);
 
       recordAudit(
         proposal.id,
@@ -4507,7 +4566,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         );
       }
 
-      const outcome = addRating(
+      let outcome = addRating(
         params.proposalId,
         "user",
         params.score,
@@ -4516,13 +4575,15 @@ export default function daoExtension(pi: ExtensionAPI) {
 
       // Add optional metric
       if (params.metricName && params.metricBefore && params.metricAfter) {
-        addMetric(
+        outcome = addMetric(
           params.proposalId,
           params.metricName,
           params.metricBefore,
           params.metricAfter,
         );
       }
+
+      ghAddOutcome(proposal, outcome);
 
       const stars = "★".repeat(params.score) + "☆".repeat(5 - params.score);
 
@@ -4598,6 +4659,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       // Use execution result if available, otherwise use proposal description
       const plan = proposal.executionResult || proposal.description;
       const result = performDryRun(params.proposalId, plan);
+      ghAddSnapshot(proposal, snapshot, result);
 
       recordAudit(
         params.proposalId,
@@ -4655,6 +4717,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const result = performRollback(params.proposalId);
+      ghAddRollback(proposal, result);
 
       recordAudit(
         params.proposalId,

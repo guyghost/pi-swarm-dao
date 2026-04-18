@@ -742,6 +742,21 @@ export interface ReleasePacket {
   storeNotes: string;
 }
 
+export interface ArtefactFileReference {
+  path: string;
+  url?: string;
+}
+
+export interface ArtefactFileIndex {
+  decisionBrief: ArtefactFileReference;
+  adr: ArtefactFileReference;
+  riskReport: ArtefactFileReference;
+  prdLite: ArtefactFileReference;
+  implementationPlan: ArtefactFileReference;
+  testPlan: ArtefactFileReference;
+  releasePacket: ArtefactFileReference;
+}
+
 export interface DAOArtefacts {
   proposalId: number;
   generatedAt: string;
@@ -752,6 +767,7 @@ export interface DAOArtefacts {
   implementationPlan: ImplementationPlan;
   testPlan: TestPlan;
   releasePacket: ReleasePacket;
+  files?: ArtefactFileIndex;
 }
 
 // ============================================================

@@ -1,5 +1,6 @@
 import type { AuditEntry } from "../types.js";
 import { getState, setState } from "../persistence.js";
+import { ghAddAuditEntry } from "../github-persistence.js";
 
 /**
  * Record an audit entry — appends to state.auditLog with auto-incremented ID.
@@ -28,6 +29,8 @@ export const recordAudit = (
   state.auditLog.push(entry);
   state.nextAuditId++;
   setState(state);
+
+  ghAddAuditEntry(proposalId, layer, action, details);
 
   return entry;
 };

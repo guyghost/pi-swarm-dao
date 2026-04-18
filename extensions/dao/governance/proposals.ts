@@ -75,6 +75,7 @@ export const createProposal = (
   proposedBy: string = "user",
   context?: string,
   content?: Partial<ProposalContent>,
+  id?: number,
 ): Proposal => {
   const state = getState();
 
@@ -99,8 +100,10 @@ export const createProposal = (
       }
     : undefined;
 
+  const proposalId = id ?? state.nextProposalId;
+
   const proposal: Proposal = {
-    id: state.nextProposalId++,
+    id: proposalId,
     title,
     type,
     description,
@@ -114,6 +117,7 @@ export const createProposal = (
     createdAt: new Date().toISOString(),
   };
 
+  state.nextProposalId = Math.max(state.nextProposalId, proposalId + 1);
   state.proposals.push(proposal);
   setState(state);
   return proposal;
