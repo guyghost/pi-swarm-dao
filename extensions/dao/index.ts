@@ -1959,7 +1959,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:propose
   // ================================================================
 
-  registerDaoCommandAliases(["dao:propose", "dao-propose"], {
+  registerDaoCommandAliases(["dao:propose"], {
     description: "Interactively create a new proposal",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       if (!ctx.hasUI) {
@@ -2035,7 +2035,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:update-proposal
   // ================================================================
 
-  registerDaoCommandAliases(["dao:update-proposal", "dao-update-proposal"], {
+  registerDaoCommandAliases(["dao:update-proposal"], {
     description: "Interactively update structured fields on an open proposal",
     async handler(args: string, ctx: ExtensionCommandContext) {
       if (!ctx.hasUI) {
@@ -2157,7 +2157,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:config
   // ================================================================
 
-  registerDaoCommandAliases(["dao:config", "dao-config"], {
+  registerDaoCommandAliases(["dao:config"], {
     description: "View or modify DAO configuration",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
@@ -2227,7 +2227,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:history
   // ================================================================
 
-  registerDaoCommandAliases(["dao:history", "dao-history"], {
+  registerDaoCommandAliases(["dao:history"], {
     description: "Show the full history of DAO proposals and deliberations",
     async handler(_args: string, _ctx: ExtensionCommandContext) {
       const proposals = listProposals();
@@ -2245,7 +2245,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:audit
   // ================================================================
 
-  registerDaoCommandAliases(["dao:audit", "dao-audit"], {
+  registerDaoCommandAliases(["dao:audit"], {
     description: "Show the full DAO audit trail across all proposals",
     async handler(_args: string, _ctx: ExtensionCommandContext) {
       const state = getState();
@@ -2263,7 +2263,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:deliberate
   // ================================================================
 
-  registerDaoCommandAliases(["dao:deliberate", "dao-deliberate"], {
+  registerDaoCommandAliases(["dao:deliberate"], {
     description:
       "Deliberate on open proposals. Pass a proposal ID to deliberate only that one.",
     async handler(args: string, ctx: ExtensionCommandContext) {
@@ -2619,7 +2619,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:status
   // ================================================================
 
-  registerDaoCommandAliases(["dao:status", "dao-status"], {
+  registerDaoCommandAliases(["dao:status"], {
     description:
       "View the DAO proposal pipeline dashboard. Filters: --stage, --type, --needs-action, --stale",
     async handler(args: string, _ctx: ExtensionCommandContext) {
@@ -2676,7 +2676,7 @@ export default function daoExtension(pi: ExtensionAPI) {
   // COMMAND: /dao:roundtable
   // ================================================================
 
-  registerDaoCommandAliases(["dao:roundtable", "dao-roundtable"], {
+  registerDaoCommandAliases(["dao:roundtable"], {
     description: "Ask every agent to suggest a proposal idea (round table)",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
