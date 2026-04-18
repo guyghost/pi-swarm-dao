@@ -483,6 +483,11 @@ export interface Proposal {
   // Structured content (V2)
   content?: ProposalContent;
 
+  // Legacy/top-level structured proposal fields
+  problemStatement?: string;
+  successMetrics?: string[];
+  rollbackConditions?: string[];
+
   // Acceptance Criteria (V2 — Proposal #10)
   acceptanceCriteria?: AcceptanceCriterion[];
 

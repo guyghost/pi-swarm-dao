@@ -30,6 +30,7 @@ import {
   storeExecutionResult,
   storeCompositeScore,
   formatProposal,
+  updateProposalStructuredFields,
 } from "./governance/proposals.js";
 import {
   parseVoteFromOutput,
@@ -62,6 +63,7 @@ import {
   validateCouncilApproval,
   formatCouncilInfo,
 } from "./governance/councils.js";
+import { validateProposalQuality } from "./governance/proposal-quality.js";
 
 // Layer 2: Intelligence
 import {
@@ -170,6 +172,21 @@ import {
 } from "./render-pipeline.js";
 
 export default function daoExtension(pi: ExtensionAPI) {
+  const registerDaoCommandAliases = (
+    names: string[],
+    command: {
+      description: string;
+      handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+    },
+  ) => {
+    for (const name of names) {
+      pi.registerCommand(name, {
+        description: command.description,
+        handler: command.handler,
+      });
+    }
+  };
+
   // ================================================================
   // STATE RESTORATION
   // ================================================================
@@ -232,6 +249,7 @@ export default function daoExtension(pi: ExtensionAPI) {
 
     daoContext += `\n\nYou have access to DAO governance tools:`;
     daoContext += `\n- \`dao_propose\` → create proposals (types: product-feature, security-change, technical-change, release-change, governance-change)`;
+    daoContext += `\n- \`dao_update_proposal\` → update structured fields on an open proposal so it can pass the quality gate`;
     daoContext += `\n- \`dao_deliberate\` → run full swarm deliberation + weighted vote + composite scoring`;
     daoContext += `\n- \`dao_check\` → run control gates on approved proposals before execution`;
     daoContext += `\n- \`dao_plan\` → generate structured delivery plan`;
@@ -1009,49 +1027,17 @@ export default function daoExtension(pi: ExtensionAPI) {
       );
 
       // Store structured fields (Proposal #6 — Template)
-      const structuredFields: string[] = [];
-      const missingFields: string[] = [];
+      updateProposalStructuredFields(proposal.id, {
+        problemStatement: params.problemStatement,
+        acceptanceCriteria: params.acceptanceCriteria,
+        successMetrics: params.successMetrics,
+        rollbackConditions: params.rollbackConditions,
+      });
 
-      if (params.problemStatement) {
-        (proposal as any).problemStatement = params.problemStatement;
-        structuredFields.push("problemStatement");
-      } else {
-        missingFields.push("problemStatement");
-      }
-
-      if (params.acceptanceCriteria && params.acceptanceCriteria.length > 0) {
-        proposal.acceptanceCriteria = params.acceptanceCriteria.map(
-          (ac, i) => ({
-            id: `AC-${i + 1}`,
-            given: "Proposal is executed",
-            when: "Implementation is verified",
-            then: ac,
-          }),
-        );
-        structuredFields.push("acceptanceCriteria");
-      } else {
-        missingFields.push("acceptanceCriteria");
-      }
-
-      if (params.successMetrics && params.successMetrics.length > 0) {
-        (proposal as any).successMetrics = params.successMetrics;
-        structuredFields.push("successMetrics");
-      } else {
-        missingFields.push("successMetrics");
-      }
-
-      if (params.rollbackConditions && params.rollbackConditions.length > 0) {
-        (proposal as any).rollbackConditions = params.rollbackConditions;
-        structuredFields.push("rollbackConditions");
-      } else {
-        missingFields.push("rollbackConditions");
-      }
-
-      // Quality warning for missing structured fields
-      const qualityWarning =
-        missingFields.length > 0
-          ? `\n\n> ⚠️ **Quality Warning:** Missing structured fields: ${missingFields.join(", ")}. These are strongly recommended for quality deliberation and control gate validation. Future versions may require them.`
-          : "";
+      const qualityValidation = validateProposalQuality(proposal);
+      const qualityWarning = !qualityValidation.valid
+        ? `\n\n> ⚠️ **Quality Warning:** This proposal was created, but \`dao_deliberate\` will be blocked until the missing structured fields are added.\n\n${qualityValidation.template}`
+        : "";
 
       // Classify risk zone
       const zone = classifyRiskZone(proposal);
@@ -1105,6 +1091,100 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // TOOL: dao_update_proposal
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_update_proposal",
+    label: "DAO Update Proposal",
+    description:
+      "Update the structured fields of an existing open proposal so it can pass the proposal quality gate.",
+    parameters: Type.Object({
+      proposalId: Type.Number({ description: "ID of the proposal to update" }),
+      problemStatement: Type.Optional(
+        Type.String({
+          description: "Updated problem statement",
+        }),
+      ),
+      acceptanceCriteria: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Updated acceptance criteria list",
+        }),
+      ),
+      successMetrics: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Updated success metrics list",
+        }),
+      ),
+      rollbackConditions: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Updated rollback conditions list",
+        }),
+      ),
+    }),
+    promptSnippet:
+      "dao_update_proposal — Update structured fields on an open proposal",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const state = getState();
+      if (!state.initialized) {
+        return toolResult("DAO not initialized. Run `dao_setup` first.");
+      }
+
+      const proposal = getProposal(params.proposalId);
+      if (!proposal) {
+        return toolResult(`Proposal #${params.proposalId} not found.`);
+      }
+
+      if (proposal.status !== "open") {
+        return toolResult(
+          `Proposal #${proposal.id} is not open (status: ${proposal.status}). Only open proposals can be updated with this helper.`,
+        );
+      }
+
+      const updates = {
+        problemStatement: params.problemStatement,
+        acceptanceCriteria: params.acceptanceCriteria,
+        successMetrics: params.successMetrics,
+        rollbackConditions: params.rollbackConditions,
+      };
+      const updatedFields = Object.entries(updates)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key);
+
+      if (updatedFields.length === 0) {
+        return toolResult(
+          "No structured fields provided. Update at least one of: problemStatement, acceptanceCriteria, successMetrics, rollbackConditions.",
+        );
+      }
+
+      const updatedProposal = updateProposalStructuredFields(proposal.id, updates);
+      const qualityValidation = validateProposalQuality(updatedProposal);
+
+      recordAudit(
+        proposal.id,
+        "governance",
+        "proposal_updated",
+        "user",
+        `Updated structured proposal fields: ${updatedFields.join(", ")}`,
+      );
+
+      const qualityStatus = qualityValidation.valid
+        ? "✅ Proposal now satisfies the quality gate and is ready for `dao_deliberate`."
+        : `⚠️ Proposal updated, but it is still missing: ${qualityValidation.missingFields.join(", ")}.`;
+
+      return toolResult(
+        `# 📝 Proposal Updated — #${updatedProposal.id}\n\n` +
+          `**Updated Fields:** ${updatedFields.map((field) => `\`${field}\``).join(", ")}\n\n` +
+          `${qualityStatus}` +
+          (!qualityValidation.valid
+            ? `\n\n${qualityValidation.template}`
+            : "") +
+          `\n\nRun \`dao_deliberate\` with proposalId ${updatedProposal.id} when ready.`,
+      );
+    },
+  });
+
+  // ================================================================
   // TOOL: dao_deliberate
   // ================================================================
 
@@ -1135,6 +1215,24 @@ export default function daoExtension(pi: ExtensionAPI) {
       if (proposal.status !== "open") {
         return toolResult(
           `Proposal #${proposal.id} is not open (status: ${proposal.status}). Only open proposals can be deliberated.`,
+        );
+      }
+
+      const qualityValidation = validateProposalQuality(proposal);
+      if (!qualityValidation.valid) {
+        recordAudit(
+          proposal.id,
+          "governance",
+          "deliberation_blocked_validation",
+          "system",
+          `Deliberation blocked: missing required proposal fields (${qualityValidation.missingFields.join(", ")})`,
+        );
+
+        return toolResult(
+          `# ❌ Deliberation Blocked — Proposal #${proposal.id}\n\n` +
+            `Proposal quality gate failed. Add the required structured fields, then retry \`dao_deliberate\`.\n\n` +
+            `${qualityValidation.template}\n\n` +
+            `> The proposal remains in status \`open\` so it can be amended and retried.`,
         );
       }
 
@@ -1352,6 +1450,174 @@ export default function daoExtension(pi: ExtensionAPI) {
     },
   });
 
+  const runControlCheck = async (
+    proposalId: number,
+    onProgress?: (message: string) => void,
+  ): Promise<string> => {
+    const proposal = getProposal(proposalId);
+    if (!proposal) {
+      return `Proposal #${proposalId} not found.`;
+    }
+
+    if (proposal.status !== "approved" && proposal.status !== "controlled") {
+      return `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`;
+    }
+
+    onProgress?.(`🛡️ Running control gates on proposal #${proposal.id}: ${proposal.title}...`);
+
+    const controlResult = runGates(proposal);
+    const checklist = generateChecklist(proposal);
+    controlResult.checklist = checklist;
+    const stats = checklistStats(checklist);
+
+    if (controlResult.allGatesPassed && proposal.status !== "controlled") {
+      const gatesTransitionResult = await transitionProposal(proposal.id, "pass_gates", {
+        status: proposal.status,
+        gatesPassed: true,
+      });
+      if (!gatesTransitionResult.success) {
+        return `❌ Control gates passed but FSM transition failed: ${gatesTransitionResult.error}`;
+      }
+    }
+
+    recordAudit(
+      proposal.id,
+      "control",
+      controlResult.allGatesPassed ? "gates_passed" : "gates_failed",
+      "system",
+      `Control check: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings, ${stats.checked}/${stats.total} checklist items`,
+    );
+
+    ghAddControlResult(proposal, controlResult);
+
+    const gatesFormatted = renderControlResult(controlResult);
+    const checklistFormatted = formatChecklist(checklist);
+    const nextStep = controlResult.allGatesPassed
+      ? `Run \`dao_plan\` with proposalId ${proposal.id} to generate the delivery plan.`
+      : "Resolve blockers before proceeding. Address the failed gates above.";
+
+    return (
+      gatesFormatted +
+      "\n\n" +
+      checklistFormatted +
+      "\n\n" +
+      `---\n\n**Next:** ${nextStep}`
+    );
+  };
+
+  const runProposalExecution = async (
+    proposalId: number,
+    ctx?: { ui?: ExtensionCommandContext["ui"] },
+    onProgress?: (message: string) => void,
+  ): Promise<string> => {
+    const proposal = getProposal(proposalId);
+    if (!proposal) {
+      return `Proposal #${proposalId} not found.`;
+    }
+
+    if (proposal.status === "failed") {
+      const retryResult = await transitionProposal(proposal.id, "retry", {
+        status: proposal.status,
+      });
+      if (!retryResult.success) {
+        return `❌ Cannot retry from failed state: ${retryResult.error}`;
+      }
+    }
+
+    if (proposal.status !== "approved" && proposal.status !== "controlled") {
+      return `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). It must pass deliberation and control gates first.`;
+    }
+
+    recordAudit(
+      proposal.id,
+      "delivery",
+      "execution_started",
+      "user",
+      `Execution started for proposal #${proposal.id}: ${proposal.title}`,
+    );
+
+    onProgress?.(`🚀 Executing proposal #${proposal.id}: ${proposal.title}...`);
+
+    try {
+      captureSnapshot(proposal.id);
+
+      ctx?.ui?.setWorkingMessage?.(
+        "DAO: Executing proposal (⏳ this may take several minutes)...",
+      );
+      const result = await executeProposal(proposal, undefined);
+
+      ctx?.ui?.setWorkingMessage?.();
+      storeExecutionResult(proposal.id, result);
+
+      proposal.stage = "postmortem";
+      const execTransitionResult = await transitionProposal(proposal.id, "execute", {
+        status: proposal.status,
+        gatesPassed: true,
+      });
+      if (!execTransitionResult.success) {
+        throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
+      }
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_completed",
+        "system",
+        `Execution completed successfully for proposal #${proposal.id}`,
+      );
+
+      ghAddExecution(proposal, result);
+
+      const verification = verifyExecution(proposal.id, [], process.cwd());
+      const state = getState();
+      state.verifications[proposal.id] = verification;
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_verified",
+        "system",
+        `Execution verification: ${verification.status} (${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed)`,
+      );
+
+      const verificationSummary =
+        verification.status === "success"
+          ? `✅ Verified: ${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed, compilation OK`
+          : verification.status === "partial"
+            ? `⚠️ Partial: ${verification.testsFailed ?? 0} test(s) failed or ${verification.missingFiles.length} missing file(s)`
+            : `❌ Failed: ${verification.summary}`;
+
+      return (
+        `# 🚀 Execution Complete — #${proposal.id}: ${proposal.title}\n\n` +
+        `**Status:** ✅ Executed\n` +
+        `**Verification:** ${verificationSummary}\n\n` +
+        `## Execution Output\n${result}\n\n` +
+        `---\n\nRun \`dao_artefacts\` with proposalId ${proposal.id} to view all generated artefacts.`
+      );
+    } catch (err: any) {
+      await transitionProposal(proposal.id, "fail_execution", {
+        status: proposal.status,
+      });
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_failed",
+        "system",
+        `Execution failed: ${err.message}`,
+      );
+
+      ghAddExecution(proposal, `⚠️ Execution Failed: ${err.message}`);
+      ctx?.ui?.setWorkingMessage?.();
+
+      return (
+        `# ⚠️ Execution Failed — #${proposal.id}: ${proposal.title}\n\n` +
+        `**Error:** ${err.message}\n\n` +
+        `The proposal status has been set to "failed". Review the error and try again.`
+      );
+    }
+  };
+
   // ================================================================
   // TOOL: dao_check
   // ================================================================
@@ -1366,76 +1632,20 @@ export default function daoExtension(pi: ExtensionAPI) {
     }),
     promptSnippet: "dao_check — Run control gates on an approved proposal",
     async execute(_toolCallId, params, _signal, onUpdate, _ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      if (proposal.status !== "approved" && proposal.status !== "controlled") {
-        return toolResult(
-          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`,
-        );
-      }
-
-      if (onUpdate) {
+      const result = await runControlCheck(params.proposalId, (message) => {
+        if (!onUpdate) return;
         onUpdate({
           content: [
             {
               type: "text" as const,
-              text: `🛡️ Running control gates on proposal #${proposal.id}: ${proposal.title}...`,
+              text: message,
             },
           ],
           details: {},
         });
-      }
+      });
 
-      // Run all gates
-      const controlResult = runGates(proposal);
-
-      // Generate checklist
-      const checklist = generateChecklist(proposal);
-      controlResult.checklist = checklist;
-
-      const stats = checklistStats(checklist);
-
-      // Update status to controlled if all gates passed
-      if (controlResult.allGatesPassed && proposal.status !== "controlled") {
-        const gatesTransitionResult = await transitionProposal(proposal.id, "pass_gates", {
-          status: proposal.status,
-          gatesPassed: true,
-        });
-        if (!gatesTransitionResult.success) {
-          return toolResult(`❌ Control gates passed but FSM transition failed: ${gatesTransitionResult.error}`);
-        }
-      }
-
-      // Audit
-      recordAudit(
-        proposal.id,
-        "control",
-        controlResult.allGatesPassed ? "gates_passed" : "gates_failed",
-        "system",
-        `Control check: ${controlResult.blockerCount} blockers, ${controlResult.warningCount} warnings, ${stats.checked}/${stats.total} checklist items`,
-      );
-
-      // GitHub Issue — persist control gate results
-      ghAddControlResult(proposal, controlResult);
-
-      // Format results
-      const gatesFormatted = renderControlResult(controlResult);
-      const checklistFormatted = formatChecklist(checklist);
-
-      const nextStep = controlResult.allGatesPassed
-        ? `Run \`dao_plan\` with proposalId ${proposal.id} to generate the delivery plan.`
-        : "Resolve blockers before proceeding. Address the failed gates above.";
-
-      return toolResult(
-        gatesFormatted +
-          "\n\n" +
-          checklistFormatted +
-          "\n\n" +
-          `---\n\n**Next:** ${nextStep}`,
-      );
+      return toolResult(result);
     },
   });
 
@@ -1533,136 +1743,21 @@ export default function daoExtension(pi: ExtensionAPI) {
     }),
     promptSnippet:
       "dao_execute — Execute an approved proposal via the Delivery Agent",
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const proposal = getProposal(params.proposalId);
-      if (!proposal) {
-        return toolResult(`Proposal #${params.proposalId} not found.`);
-      }
-
-      // Allow retry from failed status — transition back to controlled first
-      if (proposal.status === "failed") {
-        const retryResult = await transitionProposal(proposal.id, "retry", {
-          status: proposal.status,
-        });
-        if (!retryResult.success) {
-          return toolResult(`❌ Cannot retry from failed state: ${retryResult.error}`);
-        }
-      }
-
-      if (proposal.status !== "approved" && proposal.status !== "controlled") {
-        return toolResult(
-          `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). It must pass deliberation and control gates first.`,
-        );
-      }
-
-      recordAudit(
-        proposal.id,
-        "delivery",
-        "execution_started",
-        "user",
-        `Execution started for proposal #${proposal.id}: ${proposal.title}`,
-      );
-
-      if (onUpdate) {
+    async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      const result = await runProposalExecution(params.proposalId, ctx, (message) => {
+        if (!onUpdate) return;
         onUpdate({
           content: [
             {
               type: "text" as const,
-              text: `🚀 Executing proposal #${proposal.id}: ${proposal.title}...`,
+              text: message,
             },
           ],
           details: {},
         });
-      }
+      });
 
-      try {
-        // Capture pre-execution snapshot for rollback (Proposal #8)
-        captureSnapshot(proposal.id);
-
-        // Don't pass pi's tool AbortSignal to the execution subprocess.
-        // Pi's tool timeout (~180s) would cause premature aborts.
-        // Execution has no internal timeout — it runs until completion or user abort (Ctrl+C).
-        ctx?.ui?.setWorkingMessage?.(
-          "DAO: Executing proposal (\u23F3 this may take several minutes)...",
-        );
-        const result = await executeProposal(proposal, undefined);
-
-        ctx?.ui?.setWorkingMessage?.(); // Restore default
-        storeExecutionResult(proposal.id, result);
-
-        // Transition through FSM: controlled → executed
-        proposal.stage = "postmortem";
-        const execTransitionResult = await transitionProposal(proposal.id, "execute", {
-          status: proposal.status,
-          gatesPassed: true,
-        });
-        if (!execTransitionResult.success) {
-          throw new Error(`FSM transition failed (execute): ${execTransitionResult.error}`);
-        }
-
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "execution_completed",
-          "system",
-          `Execution completed successfully for proposal #${proposal.id}`,
-        );
-
-        // GitHub Issue — persist execution result
-        ghAddExecution(proposal, result);
-
-        // Post-execution verification (Proposal #7)
-        const verification = verifyExecution(proposal.id, [], process.cwd());
-        const state = getState();
-        state.verifications[proposal.id] = verification;
-
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "execution_verified",
-          "system",
-          `Execution verification: ${verification.status} (${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed)`,
-        );
-
-        const verificationSummary =
-          verification.status === "success"
-            ? `✅ Verified: ${verification.testsPassed ?? 0} tests passed, ${verification.filesChanged.length} files changed, compilation OK`
-            : verification.status === "partial"
-              ? `⚠️ Partial: ${verification.testsFailed ?? 0} test(s) failed or ${verification.missingFiles.length} missing file(s)`
-              : `❌ Failed: ${verification.summary}`;
-
-        return toolResult(
-          `# 🚀 Execution Complete — #${proposal.id}: ${proposal.title}\n\n` +
-            `**Status:** ✅ Executed\n` +
-            `**Verification:** ${verificationSummary}\n\n` +
-            `## Execution Output\n${result}\n\n` +
-            `---\n\nRun \`dao_artefacts\` with proposalId ${proposal.id} to view all generated artefacts.`,
-        );
-      } catch (err: any) {
-        // Intentionally ignore fail_execution result — we're already in an error path.
-        // If this transition also fails, the proposal stays in its current status
-        // and the original error is more important to report to the user.
-        await transitionProposal(proposal.id, "fail_execution", {
-          status: proposal.status,
-        });
-
-        recordAudit(
-          proposal.id,
-          "delivery",
-          "execution_failed",
-          "system",
-          `Execution failed: ${err.message}`,
-        );
-
-        // GitHub Issue — persist failure
-        ghAddExecution(proposal, `⚠️ Execution Failed: ${err.message}`);
-
-        return toolResult(
-          `# ⚠️ Execution Failed — #${proposal.id}: ${proposal.title}\n\n` +
-            `**Error:** ${err.message}\n\n` +
-            `The proposal status has been set to \"failed\". Review the error and try again.`,
-        );
-      }
+      return toolResult(result);
     },
   });
 
@@ -1861,10 +1956,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-propose
+  // COMMAND: /dao:propose
   // ================================================================
 
-  pi.registerCommand("dao-propose", {
+  registerDaoCommandAliases(["dao:propose", "dao-propose"], {
     description: "Interactively create a new proposal",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       if (!ctx.hasUI) {
@@ -1926,7 +2021,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         "governance",
         "proposal_created",
         "user",
-        `Proposal "${title}" created via /dao-propose command`,
+        `Proposal "${title}" created via /dao:propose command`,
       );
 
       ctx.ui.notify(`Proposal #${proposal.id} created!`, "info");
@@ -1937,10 +2032,132 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-config
+  // COMMAND: /dao:update-proposal
   // ================================================================
 
-  pi.registerCommand("dao-config", {
+  registerDaoCommandAliases(["dao:update-proposal", "dao-update-proposal"], {
+    description: "Interactively update structured fields on an open proposal",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      if (!ctx.hasUI) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content:
+            "Interactive proposal updates require UI mode. Use the `dao_update_proposal` tool instead.",
+          display: true,
+        });
+        return;
+      }
+
+      const state = getState();
+      if (!state.initialized) {
+        ctx.ui.notify("DAO not initialized. Run /dao first.", "warning");
+        return;
+      }
+
+      const openProposals = state.proposals.filter((p) => p.status === "open");
+      if (openProposals.length === 0) {
+        pi.sendMessage({
+          customType: "dao-update-proposal",
+          content:
+            "# 📝 No Open Proposals\n\nThere are no open proposals to update. Create one with `/dao:propose` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const parsedId = Number.parseInt(args.trim(), 10);
+      let proposal = Number.isFinite(parsedId)
+        ? openProposals.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (!proposal) {
+        const choice = await ctx.ui.select(
+          "Choose an open proposal to update",
+          openProposals.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = openProposals.find((p) => p.id === selectedId);
+      }
+
+      if (!proposal) {
+        ctx.ui.notify("Proposal not found or not open.", "warning");
+        return;
+      }
+
+      const problemStatementInput = await ctx.ui.editor(
+        "Problem Statement",
+        proposal.problemStatement ?? "Describe the problem, for whom, and why it matters. Leave unchanged if already correct.",
+      );
+      if (problemStatementInput == null) return;
+
+      const acceptanceCriteriaInput = await ctx.ui.editor(
+        "Acceptance Criteria",
+        proposal.acceptanceCriteria?.map((c) => c.then).join("\n") ?? "One acceptance criterion per line.",
+      );
+      if (acceptanceCriteriaInput == null) return;
+
+      const successMetricsInput = await ctx.ui.editor(
+        "Success Metrics",
+        proposal.successMetrics?.join("\n") ?? "One success metric per line.",
+      );
+      if (successMetricsInput == null) return;
+
+      const rollbackConditionsInput = await ctx.ui.editor(
+        "Rollback Conditions",
+        proposal.rollbackConditions?.join("\n") ?? "One rollback condition per line.",
+      );
+      if (rollbackConditionsInput == null) return;
+
+      const problemStatement = problemStatementInput.trim();
+      const acceptanceCriteriaText = acceptanceCriteriaInput;
+      const successMetricsText = successMetricsInput;
+      const rollbackConditionsText = rollbackConditionsInput;
+
+      const toList = (value: string) =>
+        value
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+
+      const updatedProposal = updateProposalStructuredFields(proposal.id, {
+        problemStatement: problemStatement || proposal.problemStatement,
+        acceptanceCriteria: toList(acceptanceCriteriaText),
+        successMetrics: toList(successMetricsText),
+        rollbackConditions: toList(rollbackConditionsText),
+      });
+
+      const qualityValidation = validateProposalQuality(updatedProposal);
+      recordAudit(
+        proposal.id,
+        "governance",
+        "proposal_updated",
+        "user",
+        `Updated structured proposal fields via /dao:update-proposal`,
+      );
+
+      const summary = qualityValidation.valid
+        ? "✅ Proposal now satisfies the quality gate and is ready for `/dao:deliberate`."
+        : `⚠️ Proposal updated, but it is still missing: ${qualityValidation.missingFields.join(", ")}.`;
+
+      pi.sendMessage({
+        customType: "dao-update-proposal",
+        content:
+          `# 📝 Proposal Updated — #${updatedProposal.id}\n\n` +
+          `**Title:** ${updatedProposal.title}\n\n` +
+          `${summary}` +
+          (!qualityValidation.valid ? `\n\n${qualityValidation.template}` : "") +
+          `\n\nNext: run \`/dao:deliberate ${updatedProposal.id}\` when ready.`,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao:config
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:config", "dao-config"], {
     description: "View or modify DAO configuration",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
@@ -2007,10 +2224,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-history
+  // COMMAND: /dao:history
   // ================================================================
 
-  pi.registerCommand("dao-history", {
+  registerDaoCommandAliases(["dao:history", "dao-history"], {
     description: "Show the full history of DAO proposals and deliberations",
     async handler(_args: string, _ctx: ExtensionCommandContext) {
       const proposals = listProposals();
@@ -2025,10 +2242,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-audit
+  // COMMAND: /dao:audit
   // ================================================================
 
-  pi.registerCommand("dao-audit", {
+  registerDaoCommandAliases(["dao:audit", "dao-audit"], {
     description: "Show the full DAO audit trail across all proposals",
     async handler(_args: string, _ctx: ExtensionCommandContext) {
       const state = getState();
@@ -2043,10 +2260,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-deliberate
+  // COMMAND: /dao:deliberate
   // ================================================================
 
-  pi.registerCommand("dao-deliberate", {
+  registerDaoCommandAliases(["dao:deliberate", "dao-deliberate"], {
     description:
       "Deliberate on open proposals. Pass a proposal ID to deliberate only that one.",
     async handler(args: string, ctx: ExtensionCommandContext) {
@@ -2091,7 +2308,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           pi.sendMessage({
             customType: "dao-info",
             content:
-              "No open proposals to deliberate on. Use `/dao-roundtable` to generate new ones.",
+              "No open proposals to deliberate on. Use `/dao:roundtable` to generate new ones.",
             display: true,
           });
           return;
@@ -2139,7 +2356,7 @@ export default function daoExtension(pi: ExtensionAPI) {
             "governance",
             "deliberation_started",
             "user",
-            `Deliberation started via /dao-deliberate on proposal #${proposal.id}: ${proposal.title}`,
+            `Deliberation started via /dao:deliberate on proposal #${proposal.id}: ${proposal.title}`,
           );
 
           // Dispatch swarm
@@ -2302,7 +2519,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       );
       if (approved > 0)
         lines.push(
-          `\\nUse \`/dao-check <id>\` to run control gates on approved proposals.`,
+          `\\nUse \`/dao:check <id>\` to run control gates on approved proposals.`,
         );
 
       pi.sendMessage({
@@ -2314,10 +2531,95 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-status
+  // COMMAND: /dao:check
   // ================================================================
 
-  pi.registerCommand("dao-status", {
+  registerDaoCommandAliases(["dao:check"], {
+    description:
+      "Run control gates on an approved proposal. Pass a proposal ID or select one in UI.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const eligible = state.proposals.filter(
+        (p) => p.status === "approved" || p.status === "controlled",
+      );
+
+      if (eligible.length === 0) {
+        pi.sendMessage({
+          customType: "dao-check",
+          content:
+            "No approved or controlled proposals to check. Run `/dao:deliberate` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const trimmed = args.trim();
+      const parsedId = Number.parseInt(trimmed, 10);
+      if (trimmed && !Number.isFinite(parsedId)) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Invalid proposal ID: ${trimmed}`,
+          display: true,
+        });
+        return;
+      }
+
+      let proposal = Number.isFinite(parsedId)
+        ? eligible.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (trimmed && !proposal && Number.isFinite(parsedId)) {
+        const existing = getProposal(parsedId);
+        const reason = existing
+          ? `Proposal #${parsedId} has status **${existing.status}**. Only approved or controlled proposals can be checked.`
+          : `Proposal #${parsedId} not found.`;
+        pi.sendMessage({
+          customType: "dao-error",
+          content: reason,
+          display: true,
+        });
+        return;
+      }
+
+      if (!proposal && ctx.hasUI && eligible.length > 1) {
+        const choice = await ctx.ui.select(
+          "Choose a proposal to check",
+          eligible.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = eligible.find((p) => p.id === selectedId);
+      }
+
+      proposal ??= eligible[0];
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🛡️ Running control gates on #${proposal.id}...`, "info");
+      }
+
+      const result = await runControlCheck(proposal.id);
+      pi.sendMessage({
+        customType: "dao-check",
+        content: result,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao:status
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:status", "dao-status"], {
     description:
       "View the DAO proposal pipeline dashboard. Filters: --stage, --type, --needs-action, --stale",
     async handler(args: string, _ctx: ExtensionCommandContext) {
@@ -2371,10 +2673,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao-roundtable
+  // COMMAND: /dao:roundtable
   // ================================================================
 
-  pi.registerCommand("dao-roundtable", {
+  registerDaoCommandAliases(["dao:roundtable", "dao-roundtable"], {
     description: "Ask every agent to suggest a proposal idea (round table)",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
@@ -2457,6 +2759,464 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
+  // COMMAND: /dao:execute
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:execute"], {
+    description:
+      "Execute an approved or controlled proposal. Pass a proposal ID or select one in UI.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const eligible = state.proposals.filter(
+        (p) => p.status === "approved" || p.status === "controlled" || p.status === "failed",
+      );
+
+      if (eligible.length === 0) {
+        pi.sendMessage({
+          customType: "dao-execute",
+          content:
+            "No approved, controlled, or failed proposals to execute. Run `/dao:check` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const trimmed = args.trim();
+      const parsedId = Number.parseInt(trimmed, 10);
+      if (trimmed && !Number.isFinite(parsedId)) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Invalid proposal ID: ${trimmed}`,
+          display: true,
+        });
+        return;
+      }
+
+      let proposal = Number.isFinite(parsedId)
+        ? eligible.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (trimmed && !proposal && Number.isFinite(parsedId)) {
+        const existing = getProposal(parsedId);
+        const reason = existing
+          ? `Proposal #${parsedId} has status **${existing.status}**. Only approved, controlled, or failed proposals can be executed.`
+          : `Proposal #${parsedId} not found.`;
+        pi.sendMessage({
+          customType: "dao-error",
+          content: reason,
+          display: true,
+        });
+        return;
+      }
+
+      if (!proposal && ctx.hasUI && eligible.length > 1) {
+        const choice = await ctx.ui.select(
+          "Choose a proposal to execute",
+          eligible.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = eligible.find((p) => p.id === selectedId);
+      }
+
+      proposal ??= eligible[0];
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🚀 Executing proposal #${proposal.id}...`, "info");
+      }
+
+      const result = await runProposalExecution(proposal.id, ctx);
+      pi.sendMessage({
+        customType: "dao-execute",
+        content: result,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao:plan
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:plan"], {
+    description:
+      "Generate or view the delivery plan for an approved, controlled, or executed proposal.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const eligible = state.proposals.filter(
+        (p) => p.status === "approved" || p.status === "controlled" || p.status === "executed",
+      );
+
+      if (eligible.length === 0) {
+        pi.sendMessage({
+          customType: "dao-plan",
+          content:
+            "No approved, controlled, or executed proposals to plan. Run `/dao:check` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const trimmed = args.trim();
+      const parsedId = Number.parseInt(trimmed, 10);
+      if (trimmed && !Number.isFinite(parsedId)) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Invalid proposal ID: ${trimmed}`,
+          display: true,
+        });
+        return;
+      }
+
+      let proposal = Number.isFinite(parsedId)
+        ? eligible.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (trimmed && !proposal && Number.isFinite(parsedId)) {
+        const existing = getProposal(parsedId);
+        const reason = existing
+          ? `Proposal #${parsedId} has status **${existing.status}**. Only approved, controlled, or executed proposals can be planned.`
+          : `Proposal #${parsedId} not found.`;
+        pi.sendMessage({
+          customType: "dao-error",
+          content: reason,
+          display: true,
+        });
+        return;
+      }
+
+      if (!proposal && ctx.hasUI && eligible.length > 1) {
+        const choice = await ctx.ui.select(
+          "Choose a proposal to plan",
+          eligible.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = eligible.find((p) => p.id === selectedId);
+      }
+
+      proposal ??= eligible[0];
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🗂️ Planning proposal #${proposal.id}...`, "info");
+      }
+
+      const existingPlan = getPlan(proposal.id);
+      if (existingPlan) {
+        pi.sendMessage({
+          customType: "dao-plan",
+          content:
+            formatPlan(existingPlan) +
+            `\n\n---\n\nRun \`/dao:execute ${proposal.id}\` to execute, or \`/dao:artefacts ${proposal.id}\` to view generated artefacts.`,
+          display: true,
+        });
+        return;
+      }
+
+      const deliveryOutput = proposal.agentOutputs.find((o) => o.agentId === "delivery");
+      const plan = parseDeliveryPlan(
+        proposal.id,
+        deliveryOutput?.content ?? proposal.description,
+      );
+
+      storePlan(plan);
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "plan_generated",
+        "system",
+        `Delivery plan generated: ${plan.phases.length} phases, ${plan.phases.reduce((s, p) => s + p.tasks.length, 0)} tasks, estimated ${plan.estimatedDuration}`,
+      );
+      ghAddPlan(proposal, formatPlan(plan));
+
+      pi.sendMessage({
+        customType: "dao-plan",
+        content:
+          formatPlan(plan) +
+          `\n\n---\n\nRun \`/dao:execute ${proposal.id}\` to execute, or \`/dao:artefacts ${proposal.id}\` to view generated artefacts.`,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao:artefacts
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:artefacts"], {
+    description:
+      "View generated artefacts for a proposal. Optional: pass an ID and artefact key.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const eligible = state.proposals.filter((p) => p.agentOutputs.length > 0);
+      if (eligible.length === 0) {
+        pi.sendMessage({
+          customType: "dao-artefacts",
+          content:
+            "No proposals with deliberation results yet. Run `/dao:deliberate` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const artefactOptions = [
+        "all",
+        "decision-brief",
+        "adr",
+        "risk-report",
+        "prd-lite",
+        "implementation-plan",
+        "test-plan",
+        "release-packet",
+      ] as const;
+      type ArtefactName = (typeof artefactOptions)[number];
+      const isArtefactName = (value: string): value is ArtefactName =>
+        (artefactOptions as readonly string[]).includes(value);
+
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      let artefact: ArtefactName = "all";
+      let parsedId: number | undefined;
+
+      if (tokens[0]) {
+        const firstAsId = Number.parseInt(tokens[0], 10);
+        if (Number.isFinite(firstAsId)) {
+          parsedId = firstAsId;
+          if (tokens[1]) {
+            if (!isArtefactName(tokens[1])) {
+              pi.sendMessage({
+                customType: "dao-error",
+                content: `Invalid artefact: ${tokens[1]}`,
+                display: true,
+              });
+              return;
+            }
+            artefact = tokens[1];
+          }
+        } else if (isArtefactName(tokens[0])) {
+          artefact = tokens[0];
+        } else {
+          pi.sendMessage({
+            customType: "dao-error",
+            content: `Invalid proposal ID or artefact: ${tokens[0]}`,
+            display: true,
+          });
+          return;
+        }
+      }
+
+      let proposal = parsedId !== undefined
+        ? eligible.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (parsedId !== undefined && !proposal) {
+        const existing = getProposal(parsedId);
+        const reason = existing
+          ? `Proposal #${parsedId} has no deliberation results yet. Run \`/dao:deliberate ${parsedId}\` first.`
+          : `Proposal #${parsedId} not found.`;
+        pi.sendMessage({
+          customType: "dao-error",
+          content: reason,
+          display: true,
+        });
+        return;
+      }
+
+      if (!proposal && ctx.hasUI && eligible.length > 1) {
+        const choice = await ctx.ui.select(
+          "Choose a proposal",
+          eligible.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = eligible.find((p) => p.id === selectedId);
+      }
+
+      proposal ??= eligible[0];
+
+      let artefacts = state.artefacts[proposal.id];
+      if (!artefacts) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(`📚 Generating artefacts for #${proposal.id}...`, "info");
+        }
+        const tally = tallyVotes(proposal.id, proposal.votes, proposal.type);
+        const controlResult = state.controlResults[proposal.id];
+        const plan = getPlan(proposal.id);
+
+        artefacts = generateAllArtefacts(proposal, tally, controlResult, plan);
+        state.artefacts[proposal.id] = artefacts;
+        setState(state);
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "artefacts_generated",
+          "system",
+          `Generated 7 artefacts for proposal #${proposal.id}`,
+        );
+        ghAddArtefacts(proposal, 7);
+      }
+
+      let content: string;
+      switch (artefact) {
+        case "decision-brief":
+          content = formatDecisionBrief(artefacts.decisionBrief);
+          break;
+        case "adr":
+          content = formatADR(artefacts.adr);
+          break;
+        case "risk-report":
+          content = formatRiskReport(artefacts.riskReport);
+          break;
+        case "prd-lite":
+          content = formatPRDLite(artefacts.prdLite);
+          break;
+        case "implementation-plan":
+          content = formatImplementationPlan(artefacts.implementationPlan);
+          break;
+        case "test-plan":
+          content = formatTestPlan(artefacts.testPlan);
+          break;
+        case "release-packet":
+          content = formatReleasePacket(artefacts.releasePacket);
+          break;
+        default:
+          content =
+            formatArtefactsSummary(artefacts) +
+            "\n\n---\n\n" +
+            formatAllArtefacts(artefacts);
+      }
+
+      pi.sendMessage({
+        customType: "dao-artefacts",
+        content,
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
+  // COMMAND: /dao:verify
+  // ================================================================
+
+  registerDaoCommandAliases(["dao:verify"], {
+    description:
+      "Run post-execution verification on an executed, failed, or controlled proposal.",
+    async handler(args: string, ctx: ExtensionCommandContext) {
+      const state = getState();
+      if (!state.initialized) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: "DAO not initialized. Run `/dao` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const eligible = state.proposals.filter(
+        (p) => p.status === "executed" || p.status === "failed" || p.status === "controlled",
+      );
+
+      if (eligible.length === 0) {
+        pi.sendMessage({
+          customType: "dao-verify",
+          content:
+            "No executed, failed, or controlled proposals to verify. Run `/dao:execute` first.",
+          display: true,
+        });
+        return;
+      }
+
+      const trimmed = args.trim();
+      const parsedId = Number.parseInt(trimmed, 10);
+      if (trimmed && !Number.isFinite(parsedId)) {
+        pi.sendMessage({
+          customType: "dao-error",
+          content: `Invalid proposal ID: ${trimmed}`,
+          display: true,
+        });
+        return;
+      }
+
+      let proposal = Number.isFinite(parsedId)
+        ? eligible.find((p) => p.id === parsedId)
+        : undefined;
+
+      if (trimmed && !proposal && Number.isFinite(parsedId)) {
+        const existing = getProposal(parsedId);
+        const reason = existing
+          ? `Proposal #${parsedId} has status **${existing.status}**. Only executed, failed, or controlled proposals can be verified.`
+          : `Proposal #${parsedId} not found.`;
+        pi.sendMessage({
+          customType: "dao-error",
+          content: reason,
+          display: true,
+        });
+        return;
+      }
+
+      if (!proposal && ctx.hasUI && eligible.length > 1) {
+        const choice = await ctx.ui.select(
+          "Choose a proposal to verify",
+          eligible.map((p) => `#${p.id} — ${p.title}`),
+        );
+        if (!choice) return;
+        const selectedId = Number.parseInt(choice.slice(1).split(" ")[0], 10);
+        proposal = eligible.find((p) => p.id === selectedId);
+      }
+
+      proposal ??= eligible[0];
+
+      if (ctx.hasUI) {
+        ctx.ui.notify(`🧪 Verifying proposal #${proposal.id}...`, "info");
+      }
+
+      const verification = verifyExecution(proposal.id, [], process.cwd());
+      state.verifications[proposal.id] = verification;
+
+      recordAudit(
+        proposal.id,
+        "delivery",
+        "execution_verified",
+        "system",
+        `Manual verification: ${verification.status} (${verification.testsPassed ?? 0}/${(verification.testsPassed ?? 0) + (verification.testsFailed ?? 0)} tests, ${verification.filesChanged.length} files)`,
+      );
+
+      pi.sendMessage({
+        customType: "dao-verify",
+        content: formatVerification(verification),
+        display: true,
+      });
+    },
+  });
+
+  // ================================================================
   // COMMAND: /dao:ship — Full Pipeline (deliberate → check → execute)
   // ================================================================
 
@@ -2498,7 +3258,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           pi.sendMessage({
             customType: "dao-error",
             content:
-              "No open proposals to ship. Use `/dao-roundtable` to create some.",
+              "No open proposals to ship. Use `/dao:roundtable` to create some.",
             display: true,
           });
           return;
@@ -2821,10 +3581,10 @@ export default function daoExtension(pi: ExtensionAPI) {
   });
 
   // ================================================================
-  // COMMAND: /dao hello — First-Run Onboarding (Proposal #10)
+  // COMMAND: /dao:hello — First-Run Onboarding (Proposal #10)
   // ================================================================
 
-  pi.registerCommand("dao hello", {
+  registerDaoCommandAliases(["dao:hello", "dao hello"], {
     description:
       "Guided first-run onboarding: meet the agents, create your first proposal, see deliberation in action",
     async handler(_args: string, ctx: ExtensionCommandContext) {
@@ -2838,7 +3598,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           "governance",
           "auto_initialized",
           "system",
-          "DAO auto-initialized via /dao hello",
+          "DAO auto-initialized via /dao:hello",
         );
       }
 
@@ -2849,7 +3609,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         pi.sendMessage({
           customType: "dao-hello",
           content:
-            "# 👋 Welcome Back!\n\nYou've already completed onboarding.\n\nHere's a refresher:\n- `/dao` — dashboard\n- `/dao-propose` — create a proposal\n- `/dao-deliberate` — run swarm deliberation\n- `/dao:ship` — full pipeline in one command\n- `/dao-roundtable` — ask agents for ideas\n\nRun `/dao` to see your proposals.",
+            "# 👋 Welcome Back!\n\nYou've already completed onboarding.\n\nHere's a refresher:\n- `/dao` — dashboard\n- `/dao:propose` — create a proposal\n- `/dao:deliberate` — run swarm deliberation\n- `/dao:ship` — full pipeline in one command\n- `/dao:roundtable` — ask agents for ideas\n\nRun `/dao` to see your proposals.",
           display: true,
         });
         return;
@@ -2943,7 +3703,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         proposalType as any,
         starterDescription,
         "user",
-        `Auto-generated by /dao hello onboarding`,
+        `Auto-generated by /dao:hello onboarding`,
       );
       const zone = classifyRiskZone(proposal);
       proposal.riskZone = zone;
@@ -2973,15 +3733,15 @@ export default function daoExtension(pi: ExtensionAPI) {
           "Here's what happens when you ship a proposal:\n\n" +
           "| Step | Command | What Happens |\n" +
           "|------|---------|-------------|\n" +
-          "| 🗳️ **Deliberate** | `/dao-deliberate` | 10 agents analyze, debate, and vote |\n" +
-          "| 🛡️ **Check** | `/dao-check` | Control gates verify quality & risk |\n" +
-          "| 🚀 **Execute** | `/dao-execute` | Delivery plan generated |\n" +
+          "| 🗳️ **Deliberate** | `/dao:deliberate` | 10 agents analyze, debate, and vote |\n" +
+          "| 🛡️ **Check** | `/dao:check` | Control gates verify quality & risk |\n" +
+          "| 🚀 **Execute** | `/dao:execute` | Execute the approved proposal |\n" +
           "\n" +
           "Or do it all at once:\n\n" +
           "| Command | What It Does |\n" +
           "|---------|-------------|\n" +
           "| `/dao:ship` | Full pipeline in one command |\n" +
-          "| `/dao-roundtable` | Ask agents to suggest ideas |\n" +
+          "| `/dao:roundtable` | Ask agents to suggest ideas |\n" +
           "| `/dao` | See the dashboard |\n\n" +
           "---\n\n*Press Enter for your next steps...*",
         display: true,
@@ -2995,11 +3755,11 @@ export default function daoExtension(pi: ExtensionAPI) {
         content:
           "# 🎯 Your Next Steps\n\n" +
           "You're all set! Here's what to try:\n\n" +
-          `1. \`/dao-deliberate ${proposal.id}\` — deliberate on your starter proposal` +
+          `1. \`/dao:deliberate ${proposal.id}\` — deliberate on your starter proposal` +
           "\n" +
           `2. \`/dao:ship ${proposal.id}\` — ship it through the full pipeline` +
           "\n" +
-          "3. `/dao-roundtable` — let agents suggest more proposals\n" +
+          "3. `/dao:roundtable` — let agents suggest more proposals\n" +
           "4. `/dao` — see your dashboard anytime\n\n" +
           "**Pro tips:**\n" +
           "- Use `dao_propose` to create custom proposals\n" +
@@ -3015,16 +3775,16 @@ export default function daoExtension(pi: ExtensionAPI) {
         "governance",
         "onboarding_completed",
         "user",
-        `Onboarding completed via /dao hello. Starter proposal #${proposal.id} created.`,
+        `Onboarding completed via /dao:hello. Starter proposal #${proposal.id} created.`,
       );
     },
   });
 
   // ================================================================
-  // COMMAND: /dao quickstart — Guided First Proposal (Proposal #9)
+  // COMMAND: /dao:quickstart — Guided First Proposal (Proposal #9)
   // ================================================================
 
-  pi.registerCommand("dao quickstart", {
+  registerDaoCommandAliases(["dao:quickstart", "dao quickstart"], {
     description:
       "Run a full DAO pipeline demo: propose → deliberate → check → artefacts (~3-5 min)",
     async handler(_args: string, ctx: ExtensionCommandContext) {
@@ -3038,7 +3798,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           "governance",
           "auto_initialized",
           "system",
-          "DAO auto-initialized via /dao quickstart",
+          "DAO auto-initialized via /dao:quickstart",
         );
       }
 
@@ -3074,7 +3834,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         "product-feature",
         sampleDescription,
         "user",
-        "Auto-generated by /dao quickstart",
+        "Auto-generated by /dao:quickstart",
       );
       const zone = classifyRiskZone(proposal);
       proposal.riskZone = zone;
@@ -3220,7 +3980,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           pi.sendMessage({
             customType: "dao-quickstart",
             content:
-              "# ⚠️ Sample proposal was rejected\n\nThis can happen — the swarm votes honestly. Try again with `/dao quickstart` or create your own proposal with `/dao-propose`.",
+              "# ⚠️ Sample proposal was rejected\n\nThis can happen — the swarm votes honestly. Try again with `/dao:quickstart` or create your own proposal with `/dao:propose`.",
             display: true,
           });
           return;
@@ -3314,10 +4074,10 @@ export default function daoExtension(pi: ExtensionAPI) {
             "````\n\n" +
             "### What's Next?\n\n" +
             "| Command | What It Does |\n|---------|-------------|\n" +
-            "| `/dao-propose` | Create your own proposal |\n" +
-            "| `/dao-roundtable` | Let agents suggest ideas |\n" +
+            "| `/dao:propose` | Create your own proposal |\n" +
+            "| `/dao:roundtable` | Let agents suggest ideas |\n" +
             "| `/dao:ship <id>` | Run the full pipeline on any proposal |\n" +
-            "| `/dao hello` | Guided onboarding tour |\n" +
+            "| `/dao:hello` | Guided onboarding tour |\n" +
             "| `/dao` | View your dashboard |\n\n" +
             "Welcome to the swarm! 🐝",
           display: true,
@@ -3333,7 +4093,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       } catch (err: any) {
         pi.sendMessage({
           customType: "dao-error",
-          content: `# ❌ Quickstart Failed\n\n**Error:** ${err.message}\n\nTry running \`/dao quickstart\` again or use the individual commands: \`/dao-propose\`, \`/dao-deliberate\`, \`/dao-check\`.`,
+          content: `# ❌ Quickstart Failed\n\n**Error:** ${err.message}\n\nTry running \`/dao:quickstart\` again or use the individual steps: \`/dao:propose\`, \`/dao:deliberate\`, then \`/dao:check\`.`,
           display: true,
         });
       }

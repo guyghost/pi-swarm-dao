@@ -102,13 +102,13 @@ const actionHint = (proposal: Proposal): string => {
     return `⏳ Run \`dao_approve_amendment ${proposal.id}\` to approve`;
   }
   if (proposal.status === "failed") {
-    return `🔄 Run \`dao_execute ${proposal.id}\` to retry`;
+    return `🔄 Run \`/dao:execute ${proposal.id}\` to retry`;
   }
   if (proposal.status === "approved") {
-    return `🛡️ Run \`dao_check ${proposal.id}\` to run gates`;
+    return `🛡️ Run \`/dao:check ${proposal.id}\` to run gates`;
   }
   if (proposal.status === "controlled") {
-    return `🚀 Run \`dao_execute ${proposal.id}\` to execute`;
+    return `🚀 Run \`/dao:execute ${proposal.id}\` to execute`;
   }
   return "";
 };
@@ -130,7 +130,7 @@ export const renderPipelineDashboard = (
   staleThresholdHours: number = 24,
 ): string => {
   if (proposals.length === 0) {
-    return "# 📊 DAO Pipeline Dashboard\n\nNo proposals found. Use `/dao-roundtable` to generate new proposals.";
+    return "# 📊 DAO Pipeline Dashboard\n\nNo proposals found. Use `/dao:roundtable` to generate new proposals.";
   }
 
   const lines: string[] = [];
@@ -250,7 +250,7 @@ export const renderPipelineDashboard = (
   }
 
   lines.push("");
-  lines.push("`/dao status` · `/dao status --stage open` · `/dao status --needs-action`");
+  lines.push("`/dao:status` · `/dao:status --stage open` · `/dao:status --needs-action`");
 
   return lines.join("\n");
 };

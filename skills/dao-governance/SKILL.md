@@ -104,15 +104,27 @@ The `dao_check` tool runs all gates after approval. Results determine whether ex
 | spec-completeness | info | Spec Writer produced actionable artifacts |
 | delivery-feasibility | warning | Delivery plan is realistic and resourced |
 
-## Slash Commands (5)
+## Slash Commands (17)
 
 | Command | Description |
 |---------|-------------|
 | `/dao` | Dashboard: agents, proposals, config |
-| `/dao-propose` | Interactive proposal creation |
-| `/dao-config` | View/modify quorum, threshold, model, concurrency |
-| `/dao-history` | Full history of proposals and votes |
-| `/dao-audit` | Audit trail for all governance decisions |
+| `/dao:propose` | Interactive proposal creation |
+| `/dao:update-proposal` | Update structured fields on an open proposal |
+| `/dao:config` | View/modify quorum, threshold, model, concurrency |
+| `/dao:history` | Full history of proposals and votes |
+| `/dao:audit` | Audit trail for all governance decisions |
+| `/dao:deliberate` | Run swarm deliberation on open proposals |
+| `/dao:check` | Run control gates on approved proposals |
+| `/dao:plan` | Generate or view the delivery plan |
+| `/dao:execute` | Execute an approved or controlled proposal |
+| `/dao:artefacts` | View generated artefacts for a proposal |
+| `/dao:verify` | Run post-execution verification |
+| `/dao:status` | View the proposal pipeline dashboard |
+| `/dao:roundtable` | Ask agents to suggest proposal ideas |
+| `/dao:ship` | Run deliberate → check → execute |
+| `/dao:hello` | Guided onboarding tour |
+| `/dao:quickstart` | Guided first proposal demo |
 
 ## Configuration
 
@@ -157,5 +169,5 @@ Verdict: ✅ APPROVED (100% for, 15/15 weighted)
 - **Context matters**: Add rich context to proposals (market data, constraints, prior decisions) for better analysis
 - **Iterative**: Create multiple proposals and compare deliberation results
 - **Use the control layer**: Run `dao_check` before execution — it catches issues the vote alone won't
-- **Audit everything**: Use `dao_audit` or `/dao-audit` to review the full decision trail post-execution
+- **Audit everything**: Use `dao_audit` or `/dao:audit` to review the full decision trail post-execution
 - **Type-specific gates**: `security` proposals promote `risk-threshold` to blocker; `release` proposals promote `delivery-feasibility` to blocker. Pick the right type for stricter (or lighter) gate enforcement.

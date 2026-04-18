@@ -248,7 +248,7 @@ describe("renderProposalCard", () => {
     const p = makeProposal({ id: 1, status: "approved" });
     const result = renderProposalCard(p);
     expect(result).toContain("Action needed");
-    expect(result).toContain("dao_check");
+    expect(result).toContain("/dao:check 1");
   });
 
   it("shows score when available", () => {

@@ -125,6 +125,51 @@ export const createProposal = (
 export const getProposal = (id: number): Proposal | undefined =>
   getState().proposals.find((p) => p.id === id);
 
+export interface StructuredProposalFieldUpdates {
+  problemStatement?: string;
+  acceptanceCriteria?: string[];
+  successMetrics?: string[];
+  rollbackConditions?: string[];
+}
+
+/**
+ * Update the structured proposal fields used by the quality gate.
+ */
+export const updateProposalStructuredFields = (
+  id: number,
+  updates: StructuredProposalFieldUpdates,
+): Proposal => {
+  const state = getState();
+  const proposal = state.proposals.find((p) => p.id === id);
+  if (!proposal) throw new Error(`Proposal #${id} not found`);
+
+  if (updates.problemStatement !== undefined) {
+    proposal.problemStatement = updates.problemStatement;
+  }
+
+  if (updates.acceptanceCriteria !== undefined) {
+    proposal.acceptanceCriteria = updates.acceptanceCriteria.length > 0
+      ? updates.acceptanceCriteria.map((ac, i) => ({
+          id: `AC-${i + 1}`,
+          given: "Proposal is executed",
+          when: "Implementation is verified",
+          then: ac,
+        }))
+      : undefined;
+  }
+
+  if (updates.successMetrics !== undefined) {
+    proposal.successMetrics = updates.successMetrics;
+  }
+
+  if (updates.rollbackConditions !== undefined) {
+    proposal.rollbackConditions = updates.rollbackConditions;
+  }
+
+  setState(state);
+  return proposal;
+};
+
 /**
  * List all proposals, optionally filtered by status.
  */

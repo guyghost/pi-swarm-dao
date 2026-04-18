@@ -8,7 +8,7 @@ A DAO extension for the [Pi coding agent](https://github.com/badlogic/pi-mono) w
 
 **pi-swarm-dao** is a Pi extension that implements a four-layer DAO governance system. Seven specialized AI agents analyze proposals in parallel, each from their own domain perspective, then cast weighted votes. The system handles the full lifecycle — from proposal creation through deliberation, quality control, and execution — with a complete audit trail throughout. Every proposal must be typed (feature, security, ux, release, or policy), which focuses agent analysis and adjusts quality gate severity.
 
-It installs as a Pi package and adds 11 tools, 5 slash commands, and 3 event hooks to your Pi session.
+It installs as a Pi package and adds 21 tools, 17 slash commands, and 3 event hooks to your Pi session.
 
 ## Installation
 
@@ -26,21 +26,24 @@ On first run, this auto-initializes the DAO with 7 default agents and displays t
 
 ## Quick Start
 
-```
-# 1. Create a proposal interactively (includes type selection)
-> /dao-propose
+```bash
+# Slash command workflow
+> /dao:propose
+> /dao:deliberate 1
+> /dao:check 1
+> /dao:plan 1
+> /dao:execute 1
+> /dao:artefacts 1
+> /dao:verify 1
 
-# Or create directly with a type:
+# Tool workflow (equivalent)
 > dao_propose title="Add dark mode" description="..." type="feature"
-
-# 2. Run swarm deliberation (7 agents analyze + vote in parallel)
-> dao_deliberate proposal_id="prop-001"
-
-# 3. Run quality control gates before execution
-> dao_check proposal_id="prop-001"
-
-# 4. Execute the approved proposal
-> dao_execute proposal_id="prop-001"
+> dao_deliberate proposalId=1
+> dao_check proposalId=1
+> dao_plan proposalId=1
+> dao_execute proposalId=1
+> dao_artefacts proposalId=1
+> dao_verify proposalId=1
 ```
 
 ## Architecture
@@ -119,10 +122,22 @@ Every proposal requires a type that scopes agent analysis and adjusts control be
 | Command | Description |
 |---------|-------------|
 | `/dao` | Dashboard |
-| `/dao-propose` | Interactive proposal creation |
-| `/dao-config` | View or modify configuration |
-| `/dao-history` | Full proposal history |
-| `/dao-audit` | Full audit trail |
+| `/dao:propose` | Interactive proposal creation |
+| `/dao:update-proposal` | Update structured fields on an open proposal |
+| `/dao:config` | View or modify configuration |
+| `/dao:history` | Full proposal history |
+| `/dao:audit` | Full audit trail |
+| `/dao:deliberate` | Run swarm deliberation on open proposals |
+| `/dao:check` | Run control gates on approved proposals |
+| `/dao:plan` | Generate or view the delivery plan |
+| `/dao:execute` | Execute an approved or controlled proposal |
+| `/dao:artefacts` | View generated artefacts for a proposal |
+| `/dao:verify` | Run post-execution verification |
+| `/dao:status` | View the proposal pipeline dashboard |
+| `/dao:roundtable` | Ask agents to suggest proposal ideas |
+| `/dao:ship` | Run deliberate → check → execute |
+| `/dao:hello` | Guided onboarding tour |
+| `/dao:quickstart` | Guided first proposal demo |
 
 ## Proposal Lifecycle
 
@@ -144,7 +159,7 @@ A proposal moves through five terminal-eligible states. It can be rejected at de
 | Max concurrent | 4 | Parallel sub-agent limit |
 | Risk threshold | 7/10 | Maximum acceptable risk score |
 
-Configuration is viewable and editable via `/dao-config`.
+Configuration is viewable and editable via `/dao:config`.
 
 ## Control Layer
 
