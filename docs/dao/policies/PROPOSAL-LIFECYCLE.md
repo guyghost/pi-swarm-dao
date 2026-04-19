@@ -39,15 +39,16 @@ open → deliberating → approved → controlled → executed
 
 ## Persistence Model
 
-The DAO uses a **GitHub-first persistence model**:
+The DAO uses an **offline-first persistence model**:
 
-- proposal = GitHub issue
-- proposal ID = issue number
-- status/type/zone = GitHub labels
-- lifecycle events = structured GitHub issue comments
+- local durable state = `.dao/`
+- proposal = local `.dao` record, optionally mirrored to GitHub
+- proposal ID = local proposal ID, optionally matched to GitHub issue number when sync is enabled
+- status/type/zone = local state, optionally mirrored to GitHub labels
+- lifecycle events = local state + optional structured GitHub issue comments
 - durable artefacts = versioned files under `docs/dao/`
 
-See [GitHub-First Source of Truth](GITHUB-FIRST-SOURCE-OF-TRUTH.md) for the canonical policy.
+See [Offline-First Storage](OFFLINE-FIRST-STORAGE.md) for the canonical policy.
 
 ## Deliberation Flow
 

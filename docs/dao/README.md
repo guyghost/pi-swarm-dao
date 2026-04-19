@@ -37,7 +37,8 @@
     ├── RISK-ZONES.md
     ├── QUORUM.md
     ├── AMENDMENT.md
-    └── GITHUB-FIRST-SOURCE-OF-TRUTH.md
+    ├── GITHUB-FIRST-SOURCE-OF-TRUTH.md
+    └── OFFLINE-FIRST-STORAGE.md
 ```
 
 ## 4-Layer Architecture
@@ -54,7 +55,8 @@
 - [DAO Charter](charter/CHARTER.md) — Mission, principles, governance model
 - [Agent Registry](agents/README.md) — All 7 agent cards
 - [Proposal Lifecycle](policies/PROPOSAL-LIFECYCLE.md) — From intake to execution
-- [GitHub-First Source of Truth](policies/GITHUB-FIRST-SOURCE-OF-TRUTH.md) — Canonical persistence model for proposals, events, and artefacts
+- [Offline-First Storage](policies/OFFLINE-FIRST-STORAGE.md) — Local `.dao/` persistence with optional GitHub sync
+- [GitHub-First Source of Truth](policies/GITHUB-FIRST-SOURCE-OF-TRUTH.md) — Historical policy for the previous persistence model
 - [Risk Zones](policies/RISK-ZONES.md) — Green / Orange / Red classification
 - [Quorum Policy](policies/QUORUM.md) — Participation and approval thresholds
 - [Self-Amendment](policies/AMENDMENT.md) — Changing the DAO from within

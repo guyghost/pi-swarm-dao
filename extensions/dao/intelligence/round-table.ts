@@ -82,7 +82,7 @@ Each agent is asked to suggest ONE concrete proposal idea.
 
 ## Context
 The DAO is running inside project \`${hostCtx.repoSlug}\` (${hostCtx.language}${hostCtx.framework ? `, ${hostCtx.framework}` : ""} — branch \`${hostCtx.branch}\`).
-It currently has ${getState().agents.length} agents, ${getState().proposals.length} proposals, and uses GitHub Issues for persistence.${hostCtx.isSelfRepo ? "\n⚠️ The DAO is running inside its own repository (pi-swarm-dao). Proposals should improve the DAO extension itself." : `\nProposals should target the host project (${hostCtx.repoSlug}), not the DAO extension.`}
+It currently has ${getState().agents.length} agents, ${getState().proposals.length} proposals, and persists locally in the project's \`.dao/\` directory with optional GitHub sync.${hostCtx.isSelfRepo ? "\n⚠️ The DAO is running inside its own repository (pi-swarm-dao). Proposals should improve the DAO extension itself." : `\nProposals should target the host project (${hostCtx.repoSlug}), not the DAO extension.`}
 
 Recent activity:
 ${getState().proposals.slice(-3).map(p => `- #${p.id}: ${p.title} (${p.status})`).join("\n") || "- No proposals yet"}

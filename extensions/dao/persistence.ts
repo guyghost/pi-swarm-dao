@@ -1,5 +1,6 @@
 import type { DAOState, DAOAgent, DAOConfig } from "./types.js";
 import { createInitialState } from "./types.js";
+import { persistLocalState, restoreLocalState } from "./local-persistence.js";
 
 // The custom type identifier for our state entries
 const STATE_ENTRY_TYPE = "dao-state";
@@ -15,6 +16,7 @@ export function getState(): DAOState {
 /** Update the current state (replaces entirely) */
 export function setState(state: DAOState): void {
   currentState = state;
+  persistLocalState(currentState);
 }
 
 const TERMINAL_STATES = new Set(["executed", "rejected", "failed"]);
@@ -94,20 +96,79 @@ export function createStateSnapshot(): { daoState: DAOState } {
     artefacts: { ...currentState.artefacts },
     outcomes: { ...currentState.outcomes },
     snapshots: { ...currentState.snapshots },
+    verifications: { ...currentState.verifications },
   };
   return { daoState: snapshot };
 }
 
+const normalizeState = (state: DAOState): DAOState => {
+  currentState = state;
+
+  for (const p of currentState.proposals) {
+    if (!p.type) {
+      (p as any).type = "feature";
+    }
+  }
+
+  for (const a of currentState.agents) {
+    if (!a.owner) a.owner = "system";
+    if (!a.mission) a.mission = a.description;
+    if (!a.riskLevel) a.riskLevel = "medium";
+    if (!a.authorizedEnvironments) a.authorizedEnvironments = ["dev", "staging", "prod"];
+    if (!a.stopConditions) a.stopConditions = [
+      { type: "timeout", description: "Default timeout", value: "60s" },
+      { type: "error", description: "LLM failure threshold", value: "3" },
+    ];
+    if (!a.kpis) a.kpis = [];
+    if (!a.lastReviewDate) a.lastReviewDate = "2026-04-13";
+  }
+
+  if (!currentState.artefacts) currentState.artefacts = {};
+
+  for (const p of currentState.proposals) {
+    if ((p as any).type === "feature") p.type = "product-feature";
+    if ((p as any).type === "security") p.type = "security-change";
+    if ((p as any).type === "ux") p.type = "product-feature";
+    if ((p as any).type === "policy") p.type = "governance-change";
+    if ((p as any).type === "release") p.type = "release-change";
+    if (!(p as any).stage) (p as any).stage = "intake";
+    if (!(p as any).riskZone) (p as any).riskZone = "green";
+  }
+
+  if (!(currentState.config as any).typeQuorum) {
+    (currentState.config as any).typeQuorum = {
+      "product-feature": { quorumPercent: 60, approvalPercent: 55, description: "Product Roadmap" },
+      "security-change": { quorumPercent: 75, approvalPercent: 70, description: "Security-sensitive" },
+      "technical-change": { quorumPercent: 60, approvalPercent: 55, description: "Technical / Architecture" },
+      "release-change": { quorumPercent: 50, approvalPercent: 51, description: "Routine Release" },
+      "governance-change": { quorumPercent: 70, approvalPercent: 66, description: "Governance / Policy" },
+    };
+  }
+
+  for (const a of currentState.agents) {
+    if (!a.councils) a.councils = [];
+  }
+
+  if (!currentState.outcomes) currentState.outcomes = {};
+  if (!currentState.snapshots) currentState.snapshots = {};
+  if (!currentState.verifications) currentState.verifications = {};
+
+  return currentState;
+};
+
 /**
- * Restore state from session branch.
- * Scans tool results on the current branch for the latest DAO state snapshot.
+ * Restore state from local storage first, then session branch.
+ * Scans tool results on the current branch for the latest DAO state snapshot only as fallback.
  *
  * @param ctx - The ExtensionContext with sessionManager access
  */
 export function restoreState(ctx: any): void {
-  let restored = false;
+  const localState = restoreLocalState();
+  if (localState) {
+    currentState = normalizeState(localState);
+    return;
+  }
 
-  // Scan the branch in reverse to find the most recent state snapshot
   const branch = ctx.sessionManager.getBranch();
   for (let i = branch.length - 1; i >= 0; i--) {
     const entry = branch[i];
@@ -116,95 +177,12 @@ export function restoreState(ctx: any): void {
       entry.message.role === "toolResult" &&
       entry.message.details?.daoState
     ) {
-      currentState = entry.message.details.daoState as DAOState;
-      restored = true;
-      break;
+      currentState = normalizeState(entry.message.details.daoState as DAOState);
+      return;
     }
   }
 
-  // Migrate proposals missing the `type` field (backward compatibility)
-  if (restored) {
-    for (const p of currentState.proposals) {
-      if (!p.type) {
-        (p as any).type = "feature"; // Default to "feature" for legacy proposals
-      }
-    }
-
-    // Migrate agents missing registry fields (backward compatibility)
-    for (const a of currentState.agents) {
-      if (!a.owner) a.owner = "system";
-      if (!a.mission) a.mission = a.description;
-      if (!a.riskLevel) a.riskLevel = "medium";
-      if (!a.authorizedEnvironments) a.authorizedEnvironments = ["dev", "staging", "prod"];
-      if (!a.stopConditions) a.stopConditions = [
-        { type: "timeout", description: "Default timeout", value: "60s" },
-        { type: "error", description: "LLM failure threshold", value: "3" },
-      ];
-      if (!a.kpis) a.kpis = [];
-      if (!a.lastReviewDate) a.lastReviewDate = "2026-04-13";
-    }
-
-    // Migrate state missing artefacts field (backward compatibility)
-    if (!currentState.artefacts) {
-      currentState.artefacts = {};
-    }
-
-    // Migrate proposals missing V2 fields
-    for (const p of currentState.proposals) {
-      // Migrate old type names to new
-      if ((p as any).type === "feature") p.type = "product-feature";
-      if ((p as any).type === "security") p.type = "security-change";
-      if ((p as any).type === "ux") p.type = "product-feature";
-      if ((p as any).type === "policy") p.type = "governance-change";
-      if ((p as any).type === "release") p.type = "release-change";
-
-      // Add missing pipeline stage
-      if (!(p as any).stage) {
-        (p as any).stage = "intake";
-      }
-
-      // Add missing risk zone
-      if (!(p as any).riskZone) {
-        (p as any).riskZone = "green";
-      }
-    }
-
-    // Migrate config missing typeQuorum
-    if (!(currentState.config as any).typeQuorum) {
-      (currentState.config as any).typeQuorum = {
-        "product-feature": { quorumPercent: 60, approvalPercent: 55, description: "Product Roadmap" },
-        "security-change": { quorumPercent: 75, approvalPercent: 70, description: "Security-sensitive" },
-        "technical-change": { quorumPercent: 60, approvalPercent: 55, description: "Technical / Architecture" },
-        "release-change": { quorumPercent: 50, approvalPercent: 51, description: "Routine Release" },
-        "governance-change": { quorumPercent: 70, approvalPercent: 66, description: "Governance / Policy" },
-      };
-    }
-
-    // Migrate agents missing councils
-    for (const a of currentState.agents) {
-      if (!a.councils) {
-        a.councils = [];
-      }
-    }
-
-    // Migrate state missing outcomes (Proposal #6)
-    if (!currentState.outcomes) {
-      currentState.outcomes = {};
-    }
-
-    // Migrate state missing snapshots (Proposal #8)
-    if (!currentState.snapshots) {
-      currentState.snapshots = {};
-    }
-    // Migrate state missing verifications (Proposal #7)
-    if (!currentState.verifications) {
-      currentState.verifications = {};
-    }
-  }
-
-  if (!restored) {
-    currentState = createInitialState();
-  }
+  currentState = createInitialState();
 }
 
 /**

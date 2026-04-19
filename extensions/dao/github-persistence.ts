@@ -36,6 +36,7 @@ import {
   RISK_ZONE_LABELS,
 } from "./types.js";
 import { getState, setState } from "./persistence.js";
+import { isGitHubSyncEnabled } from "./local-persistence.js";
 import { parseDeliveryPlan } from "./delivery/plan.js";
 import { generateAllArtefacts } from "./delivery/artefacts.js";
 import { tallyVotes } from "./governance/voting.js";
@@ -259,6 +260,7 @@ const DAO_LABELS: Array<{ name: string; color: string; description: string }> = 
 let labelsEnsured = false;
 
 export const ensureLabels = (): void => {
+  if (!isGitHubSyncEnabled()) return;
   if (labelsEnsured) return;
 
   for (const label of DAO_LABELS) {
@@ -286,6 +288,8 @@ export const ensureLabels = (): void => {
 // ── GitHub CLI Helper ────────────────────────────────────────
 
 const gh = (...args: string[]): string => {
+  if (!isGitHubSyncEnabled()) return "";
+
   try {
     return execFileSync("gh", args, {
       cwd: process.cwd(),

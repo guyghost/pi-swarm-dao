@@ -7,6 +7,13 @@ import { StringEnum } from "@mariozechner/pi-ai";
 
 // Cross-cutting
 import { getState, setState, restoreState, toolResult } from "./persistence.js";
+import {
+  getDaoRoot,
+  getStorageSettings,
+  hasLocalState,
+  isGitHubSyncEnabled,
+  updateStorageSettings,
+} from "./local-persistence.js";
 
 // Types
 import type {
@@ -241,12 +248,16 @@ export default function daoExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     restoreState(ctx);
-    ghRestoreState(); // Restore proposal → issue mapping
+    if (!hasLocalState() && getState().proposals.length === 0 && isGitHubSyncEnabled()) {
+      ghRestoreState();
+    }
   });
 
   pi.on("session_tree", async (_event, ctx) => {
     restoreState(ctx);
-    ghRestoreState();
+    if (!hasLocalState() && getState().proposals.length === 0 && isGitHubSyncEnabled()) {
+      ghRestoreState();
+    }
   });
 
   // ================================================================
@@ -313,6 +324,7 @@ export default function daoExtension(pi: ExtensionAPI) {
     daoContext += `\n- \`dao_propose_amendment\` → propose changes to DAO agents, config, quorum, gates, or councils`;
     daoContext += `\n- \`dao_update_agent\` → shortcut to propose agent property changes (creates governance-change proposal)`;
     daoContext += `\n- \`dao_update_config\` → shortcut to propose config changes (creates governance-change proposal)`;
+    daoContext += `\n- \`dao_storage_config\` → view or update offline-first storage settings and GitHub sync`;
     daoContext += `\n- \`dao_preview_amendment\` → preview amendment diff before execution`;
     daoContext += `\n- \`dao_approve_amendment\` → human confirmation to execute an approved amendment`;
     daoContext += `\n\nAvailable proposal types: product-feature (✨), security-change (🔒), technical-change (⚙️), release-change (📦), governance-change (📜).`;
@@ -1015,6 +1027,41 @@ export default function daoExtension(pi: ExtensionAPI) {
           `**Risk Zone:** ${proposal.riskZone === "red" ? "🔴 Red" : proposal.riskZone === "orange" ? "🟠 Orange" : "🟢 Green"}\n\n` +
           renderAmendmentDiff(diffs) +
           `\n\nRun \`dao_deliberate\` with proposalId ${proposal.id} to start deliberation.`,
+      );
+    },
+  });
+
+  // ================================================================
+  // TOOL: dao_storage_config
+  // ================================================================
+
+  pi.registerTool({
+    name: "dao_storage_config",
+    label: "DAO Storage Config",
+    description:
+      "View or update offline-first storage settings for the current project. Controls whether GitHub sync is enabled while keeping .dao local persistence active.",
+    parameters: Type.Object({
+      githubSyncEnabled: Type.Optional(
+        Type.Boolean({
+          description: "Enable or disable GitHub writes for DAO persistence",
+        }),
+      ),
+    }),
+    promptSnippet:
+      "dao_storage_config — View or update offline-first DAO storage settings",
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const daoRoot = getDaoRoot();
+      const current = getStorageSettings();
+      const next = params.githubSyncEnabled === undefined
+        ? current
+        : updateStorageSettings({ githubSyncEnabled: params.githubSyncEnabled });
+
+      return toolResult(
+        `# 💾 DAO Storage Configuration\n\n` +
+          `**Mode:** ${next.mode}\n` +
+          `**Local Store:** \`${daoRoot}\`\n` +
+          `**GitHub Sync:** ${next.githubSyncEnabled ? "enabled" : "disabled"}\n\n` +
+          `.dao remains the local durable store. GitHub writes are ${next.githubSyncEnabled ? "enabled" : "disabled"}.`,
       );
     },
   });

@@ -1,8 +1,10 @@
 # GitHub-First Source of Truth Policy
 
-## Decision
+> **Superseded:** The DAO now uses the offline-first model described in [OFFLINE-FIRST-STORAGE.md](OFFLINE-FIRST-STORAGE.md).
 
-For the current project, the DAO uses **GitHub + git as the canonical source of truth**.
+## Historical Decision
+
+Before offline-first storage, the DAO used **GitHub + git as the canonical source of truth**.
 
 This means:
 
