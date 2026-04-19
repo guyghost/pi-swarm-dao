@@ -232,6 +232,16 @@ const runAgent = async (
   }
 };
 
+export interface SwarmProgressUpdate {
+  completed: number;
+  total: number;
+  totalAgents: number;
+  agentId: string;
+  agentName: string;
+  output: AgentOutput;
+  isRetry: boolean;
+}
+
 /**
  * Dispatch all agents in parallel to deliberate on a proposal.
  * Max concurrency is controlled by config.maxConcurrent.
@@ -246,7 +256,7 @@ export const dispatchSwarm = async (
   proposal: Proposal,
   agents: DAOAgent[],
   signal?: AbortSignal,
-  onProgress?: (completed: number, total: number, agentName: string) => void
+  onProgress?: (update: SwarmProgressUpdate) => void
 ): Promise<AgentOutput[]> => {
   const maxConcurrent = getState().config.maxConcurrent;
 
@@ -258,7 +268,15 @@ export const dispatchSwarm = async (
     async (agent) => {
       const output = await runAgent(agent, proposal, signal);
       completed++;
-      onProgress?.(completed, totalAgents, agent.name);
+      onProgress?.({
+        completed,
+        total: totalAgents,
+        totalAgents,
+        agentId: agent.id,
+        agentName: agent.name,
+        output,
+        isRetry: false,
+      });
       return output;
     }
   );
@@ -294,7 +312,15 @@ export const dispatchSwarm = async (
       async (agent) => {
         const output = await runAgent(agent, proposal, signal);
         completed++;
-        onProgress?.(completed, totalAgents + timedOutIndices.length, `${agent.name} (retry)`);
+        onProgress?.({
+          completed,
+          total: totalAgents + timedOutIndices.length,
+          totalAgents,
+          agentId: agent.id,
+          agentName: agent.name,
+          output,
+          isRetry: true,
+        });
         return output;
       }
     );

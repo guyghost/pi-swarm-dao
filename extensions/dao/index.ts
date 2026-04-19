@@ -85,7 +85,7 @@ import {
   formatAgentCard,
   formatRegistryTable,
 } from "./intelligence/agents.js";
-import { dispatchSwarm } from "./intelligence/swarm.js";
+import { dispatchSwarm, type SwarmProgressUpdate } from "./intelligence/swarm.js";
 import { synthesize } from "./intelligence/synthesis.js";
 
 // Layer 3: Delivery
@@ -114,6 +114,7 @@ import {
   formatHostContext,
   buildAgentHostContext,
 } from "./host-context.js";
+import { DeliberationOverlayComponent } from "./deliberation-overlay.js";
 
 // Round Table
 import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
@@ -173,7 +174,13 @@ import {
 import {
   renderDashboard,
   renderDeliberationProgress,
+  renderDeliberationLiveWidget,
   renderControlResult,
+} from "./render.js";
+import type {
+  DeliberationAgentLiveState,
+} from "./render.js";
+import {
   renderHistory,
   renderAgentOutputSummary,
   renderAmendmentDiff,
@@ -224,6 +231,59 @@ const persistArtefactsToRepo = (
   state.artefacts[proposal.id] = artefacts;
   setState(state);
   return files;
+};
+
+const buildInitialDeliberationAgents = (
+  state = getState(),
+): DeliberationAgentLiveState[] =>
+  state.agents.map((agent) => ({
+    agentId: agent.id,
+    agentName: agent.name,
+    weight: agent.weight,
+    status: "pending",
+  }));
+
+const updateDeliberationAgentState = (
+  agents: DeliberationAgentLiveState[],
+  update: SwarmProgressUpdate,
+): DeliberationAgentLiveState[] => {
+  const next = agents.map((agent) => ({ ...agent }));
+  const index = next.findIndex((agent) => agent.agentId === update.agentId);
+  if (index < 0) return next;
+
+  const current = next[index];
+  const parsedVote = update.output.content
+    ? parseVoteFromOutput(
+        update.output.agentId,
+        update.output.agentName,
+        current.weight,
+        update.output.content,
+      )
+    : undefined;
+
+  if (update.output.error && !update.output.content) {
+    next[index] = {
+      ...current,
+      status: "error",
+      note: update.isRetry ? "retry failed" : "no vote",
+    };
+    return next;
+  }
+
+  next[index] = {
+    ...current,
+    status: "completed",
+    vote:
+      parsedVote &&
+      (parsedVote.position !== "abstain" ||
+        parsedVote.reasoning !== "No vote section found in agent output")
+        ? parsedVote.position
+        : update.output.error
+          ? "abstain"
+          : "abstain",
+    note: update.isRetry ? "retried" : undefined,
+  };
+  return next;
 };
 
 export default function daoExtension(pi: ExtensionAPI) {
@@ -1390,7 +1450,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         proposal,
         agents,
         signal ?? undefined,
-        (completed, total, agentName) => {
+        ({ completed, total, agentName }) => {
           const progress = renderDeliberationProgress(
             completed,
             total,
@@ -2499,9 +2559,86 @@ export default function daoExtension(pi: ExtensionAPI) {
         display: true,
       });
 
+      const deliberationWidgetKey = "dao-deliberation-live";
+      const totalWeight = state.agents.reduce((sum, agent) => sum + agent.weight, 0);
+      const requiredWeight = Math.max(
+        1,
+        Math.floor((totalWeight * state.config.approvalThreshold) / 100),
+      );
+
+      let deliberationOverlay: DeliberationOverlayComponent | undefined;
+      let closeDeliberationOverlay: (() => void) | undefined;
+      let deliberationOverlaySession: Promise<void | null | undefined> | undefined;
+
       if (ctx.hasUI) {
+        const overlayReady = new Promise<void>((resolve) => {
+          deliberationOverlaySession = ctx.ui.custom<void | null>(
+            (tui, theme, _kb, done) => {
+              deliberationOverlay = new DeliberationOverlayComponent(
+                tui,
+                theme,
+                () => done(),
+              );
+              closeDeliberationOverlay = () => done();
+              resolve();
+              return deliberationOverlay;
+            },
+            {
+              overlay: true,
+              overlayOptions: {
+                width: 98,
+                maxHeight: "90%",
+                anchor: "center",
+                margin: 1,
+              },
+            },
+          );
+        });
+        await overlayReady;
         ctx.ui.notify(`🗳️ Deliberating on ${label}...`, "info");
       }
+
+      const pushDeliberationLiveState = (
+        proposal: Proposal,
+        liveAgents: DeliberationAgentLiveState[],
+        subtitle: string,
+        statusLabel: string,
+        batchIndex: number,
+        lastAgent?: string,
+        completed = false,
+      ) => {
+        const weightedFor = liveAgents
+          .filter((agent) => agent.vote === "for")
+          .reduce((sum, agent) => sum + agent.weight, 0);
+        const completedAgents = liveAgents.filter((agent) => agent.status !== "pending").length;
+
+        const liveState = {
+          proposalId: proposal.id,
+          title: proposal.title,
+          subtitle,
+          statusLabel,
+          weightedFor,
+          totalWeight,
+          requiredWeight,
+          completedAgents,
+          totalAgents: state.agents.length,
+          lastAgent,
+          batchLabel: targets.length > 1 ? `${batchIndex + 1}/${targets.length}` : undefined,
+          agents: liveAgents,
+        };
+
+        if (deliberationOverlay) {
+          deliberationOverlay.setState(liveState, completed);
+          return;
+        }
+
+        if (ctx.hasUI) {
+          ctx.ui.setWidget(
+            deliberationWidgetKey,
+            renderDeliberationLiveWidget(liveState),
+          );
+        }
+      };
 
       // Sequential deliberation
       const results: Array<{
@@ -2513,7 +2650,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         error?: string;
       }> = [];
 
-      for (const proposal of targets) {
+      for (const [proposalIndex, proposal] of targets.entries()) {
         const startTime = Date.now();
         try {
           // Transition to deliberating
@@ -2539,7 +2676,32 @@ export default function daoExtension(pi: ExtensionAPI) {
           );
 
           // Dispatch swarm
-          const agentOutputs = await dispatchSwarm(proposal, state.agents);
+          let liveAgents = buildInitialDeliberationAgents(state);
+
+          pushDeliberationLiveState(
+            proposal,
+            liveAgents,
+            "Analyse en cours…",
+            "EN COURS",
+            proposalIndex,
+          );
+
+          const agentOutputs = await dispatchSwarm(
+            proposal,
+            state.agents,
+            undefined,
+            (update) => {
+              liveAgents = updateDeliberationAgentState(liveAgents, update);
+              pushDeliberationLiveState(
+                proposal,
+                liveAgents,
+                update.isRetry ? "Retry en cours…" : "Collecte des votes…",
+                "EN COURS",
+                proposalIndex,
+                update.agentName,
+              );
+            },
+          );
 
           // Parse votes
           const votes = agentOutputs.map((output) => {
@@ -2637,6 +2799,21 @@ export default function daoExtension(pi: ExtensionAPI) {
             `Deliberation completed: ${newStatus} (${tally.weightedFor}/${tally.totalVotingWeight} weighted for, score ${compositeScore.weighted}/100)`,
           );
 
+          liveAgents = liveAgents.map((agent) => ({
+            ...agent,
+            status: agent.status === "pending" ? "completed" : agent.status,
+            vote: agent.vote ?? "abstain",
+          }));
+          pushDeliberationLiveState(
+            proposal,
+            liveAgents,
+            tally.approved ? "Proposition approuvée !" : "Proposition rejetée.",
+            tally.approved ? "APPROUVÉ" : "REJETÉ",
+            proposalIndex,
+            undefined,
+            proposalIndex === targets.length - 1,
+          );
+
           results.push({
             proposal,
             tally,
@@ -2652,6 +2829,15 @@ export default function daoExtension(pi: ExtensionAPI) {
             status: proposal.status,
           });
           ghUpdateStatus(proposal);
+          pushDeliberationLiveState(
+            proposal,
+            buildInitialDeliberationAgents(state),
+            "Délibération échouée.",
+            "ECHEC",
+            proposalIndex,
+            undefined,
+            proposalIndex === targets.length - 1,
+          );
           results.push({
             proposal,
             tally: null,
@@ -2661,6 +2847,17 @@ export default function daoExtension(pi: ExtensionAPI) {
             error: err.message,
           });
         }
+
+        if (ctx.hasUI && proposalIndex < targets.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      if (ctx.hasUI) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        closeDeliberationOverlay?.();
+        await deliberationOverlaySession;
+        ctx.ui.setWidget(deliberationWidgetKey, undefined);
       }
 
       // Format results

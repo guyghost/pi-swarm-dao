@@ -9,6 +9,7 @@ import type {
   AgentRiskLevel,
   AmendmentPayload,
   AmendmentState,
+  VotePosition,
 } from "./types.js";
 import { PROPOSAL_TYPE_LABELS } from "./types.js";
 
@@ -159,6 +160,30 @@ export const renderDashboard = (state: DAOState): string => {
   return lines.join("\n");
 };
 
+export interface DeliberationAgentLiveState {
+  agentId: string;
+  agentName: string;
+  weight: number;
+  status: "pending" | "completed" | "error";
+  vote?: VotePosition;
+  note?: string;
+}
+
+export interface DeliberationLiveState {
+  proposalId: number;
+  title: string;
+  subtitle: string;
+  statusLabel: string;
+  weightedFor: number;
+  totalWeight: number;
+  requiredWeight: number;
+  completedAgents: number;
+  totalAgents: number;
+  lastAgent?: string;
+  agents: DeliberationAgentLiveState[];
+  batchLabel?: string;
+}
+
 /**
  * Render deliberation progress (called during swarm dispatch).
  */
@@ -167,8 +192,189 @@ export const renderDeliberationProgress = (
   total: number,
   lastAgent: string
 ): string => {
-  const bar = "█".repeat(completed) + "░".repeat(total - completed);
+  const bar = "█".repeat(completed) + "░".repeat(Math.max(0, total - completed));
   return `Deliberating [${bar}] ${completed}/${total} — ${lastAgent} done`;
+};
+
+/**
+ * Render a live deliberation widget for interactive /dao:deliberate UI.
+ */
+const padRight = (value: string, width: number): string =>
+  value.length >= width ? value.slice(0, width) : value + " ".repeat(width - value.length);
+
+const centerText = (value: string, width: number): string => {
+  if (value.length >= width) return value.slice(0, width);
+  const left = Math.floor((width - value.length) / 2);
+  const right = width - value.length - left;
+  return " ".repeat(left) + value + " ".repeat(right);
+};
+
+const placeText = (line: string, col: number, text: string): string => {
+  if (col >= line.length) return line;
+  const safeText = text.slice(0, Math.max(0, line.length - col));
+  return line.slice(0, col) + safeText + line.slice(col + safeText.length);
+};
+
+const createBoard = (width: number, height: number): string[][] =>
+  Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
+
+const setChar = (board: string[][], row: number, col: number, char: string): void => {
+  if (row < 0 || row >= board.length) return;
+  if (col < 0 || col >= board[row].length) return;
+  board[row][col] = char;
+};
+
+const writeText = (board: string[][], row: number, col: number, text: string): void => {
+  for (let i = 0; i < text.length; i++) {
+    setChar(board, row, col + i, text[i]!);
+  }
+};
+
+const drawDottedLine = (
+  board: string[][],
+  fromRow: number,
+  fromCol: number,
+  toRow: number,
+  toCol: number,
+): void => {
+  const steps = Math.max(Math.abs(toRow - fromRow), Math.abs(toCol - fromCol));
+  if (steps === 0) return;
+
+  for (let i = 1; i < steps; i++) {
+    const row = Math.round(fromRow + ((toRow - fromRow) * i) / steps);
+    const col = Math.round(fromCol + ((toCol - fromCol) * i) / steps);
+    setChar(board, row, col, i % 2 === 0 ? "·" : "•");
+  }
+};
+
+const drawBox = (
+  board: string[][],
+  row: number,
+  col: number,
+  width: number,
+  height: number,
+): void => {
+  const right = col + width - 1;
+  const bottom = row + height - 1;
+  setChar(board, row, col, "╭");
+  setChar(board, row, right, "╮");
+  setChar(board, bottom, col, "╰");
+  setChar(board, bottom, right, "╯");
+  for (let x = col + 1; x < right; x++) {
+    setChar(board, row, x, "─");
+    setChar(board, bottom, x, "─");
+  }
+  for (let y = row + 1; y < bottom; y++) {
+    setChar(board, y, col, "│");
+    setChar(board, y, right, "│");
+  }
+};
+
+const boardToLines = (board: string[][]): string[] => board.map((row) => row.join(""));
+
+const shortenAgentName = (name: string): string => {
+  const map: Record<string, string> = {
+    "Product Strategist": "Product",
+    "Research Agent": "Research",
+    "Solution Architect": "Architect",
+    "Critic / Risk Agent": "Critic/Risk",
+    "Prioritization Agent": "Prioritizer",
+    "Spec Writer": "Spec Writer",
+    "Delivery Agent": "Delivery",
+  };
+  return map[name] ?? name;
+};
+
+const deliberationAgentIcon = (agent: DeliberationAgentLiveState): string => {
+  if (agent.status === "error") return "⚠️";
+  if (agent.status === "pending") return "⏳";
+  if (agent.vote === "for") return "✅";
+  if (agent.vote === "against") return "❌";
+  return "⏸️";
+};
+
+const deliberationAgentVote = (agent: DeliberationAgentLiveState): string => {
+  if (agent.status === "error") return agent.note ? `ERROR · ${agent.note}` : "ERROR";
+  if (agent.status === "pending") return "PENDING";
+  if (agent.vote === "for") return `FOR +${agent.weight}`;
+  if (agent.vote === "against") return "AGAINST";
+  return "ABSTAIN";
+};
+
+export const renderDeliberationLiveWidget = (
+  state: DeliberationLiveState,
+): string[] => {
+  const cardWidth = 92;
+  const innerWidth = cardWidth - 4;
+  const progressBar =
+    "█".repeat(state.completedAgents) +
+    "░".repeat(Math.max(0, state.totalAgents - state.completedAgents));
+  const batchPrefix = state.batchLabel ? `${state.batchLabel} • ` : "";
+
+  const headerLeft = "Délibération Pi-Swarm-DAO";
+  const headerRight = `SCORE ACTUEL ${state.weightedFor}/${state.totalWeight}   SEUIL REQUIS ${state.requiredWeight}   ÉTAT ${state.statusLabel}`;
+  const headerLine = padRight(headerLeft, Math.max(0, innerWidth - headerRight.length)) + headerRight;
+
+  const boardWidth = innerWidth;
+  const boardHeight = 19;
+  const board = createBoard(boardWidth, boardHeight);
+
+  const center = { row: 9, col: 44 };
+  const centerBox = { row: 7, col: 34, width: 20, height: 6 };
+  drawBox(board, centerBox.row, centerBox.col, centerBox.width, centerBox.height);
+  writeText(board, centerBox.row + 1, centerBox.col + 1, centerText(state.statusLabel, centerBox.width - 2));
+  writeText(board, centerBox.row + 2, centerBox.col + 1, centerText(`${state.weightedFor}/${state.totalWeight}`, centerBox.width - 2));
+  writeText(board, centerBox.row + 3, centerBox.col + 1, centerText(`#${state.proposalId}`, centerBox.width - 2));
+  writeText(board, centerBox.row + 4, centerBox.col + 1, centerText(state.subtitle.slice(0, centerBox.width - 2), centerBox.width - 2));
+
+  const positions = [
+    { row: 0, col: 31, anchorRow: 2, anchorCol: 40 },
+    { row: 2, col: 60, anchorRow: 4, anchorCol: 60 },
+    { row: 7, col: 68, anchorRow: 8, anchorCol: 68 },
+    { row: 14, col: 60, anchorRow: 14, anchorCol: 60 },
+    { row: 16, col: 31, anchorRow: 16, anchorCol: 40 },
+    { row: 14, col: 2, anchorRow: 14, anchorCol: 22 },
+    { row: 4, col: 2, anchorRow: 5, anchorCol: 22 },
+  ];
+
+  state.agents.slice(0, positions.length).forEach((agent, index) => {
+    const position = positions[index]!;
+    const title = `${deliberationAgentIcon(agent)} ${shortenAgentName(agent.agentName)} [${agent.weight}]`;
+    const vote = deliberationAgentVote(agent);
+    const boxWidth = Math.min(Math.max(title.length, vote.length) + 2, 22);
+    drawBox(board, position.row, position.col, boxWidth, 4);
+    writeText(board, position.row + 1, position.col + 1, padRight(title, boxWidth - 2));
+    writeText(board, position.row + 2, position.col + 1, padRight(vote, boxWidth - 2));
+
+    const fromRow = center.row;
+    const fromCol = center.col;
+    const toRow = position.anchorRow;
+    const toCol = position.anchorCol;
+    drawDottedLine(board, fromRow, fromCol, toRow, toCol);
+  });
+
+  const extraAgents = state.agents.slice(positions.length);
+  const lines = [
+    `╭${"─".repeat(cardWidth - 2)}╮`,
+    `│ ${padRight(headerLine, innerWidth)} │`,
+    `│ ${padRight(`${batchPrefix}Proposal #${state.proposalId} — ${state.title}`, innerWidth)} │`,
+    `│ ${padRight(state.subtitle, innerWidth)} │`,
+    `│ ${padRight(`Progress [${progressBar}] ${state.completedAgents}/${state.totalAgents}${state.lastAgent ? ` — last: ${state.lastAgent}` : ""}`, innerWidth)} │`,
+    `├${"─".repeat(cardWidth - 2)}┤`,
+    ...boardToLines(board).map((row) => `│ ${padRight(row, innerWidth)} │`),
+  ];
+
+  if (extraAgents.length > 0) {
+    lines.push(`├${"─".repeat(cardWidth - 2)}┤`);
+    for (const agent of extraAgents) {
+      lines.push(
+        `│ ${padRight(`${deliberationAgentIcon(agent)} ${agent.agentName} [w:${agent.weight}] ${deliberationAgentVote(agent)}`, innerWidth)} │`,
+      );
+    }
+  }
+
+  lines.push(`╰${"─".repeat(cardWidth - 2)}╯`);
+  return lines;
 };
 
 /**
