@@ -2303,11 +2303,23 @@ export default function daoExtension(pi: ExtensionAPI) {
     description: "View or modify DAO configuration",
     async handler(_args: string, ctx: ExtensionCommandContext) {
       const state = getState();
+      const storage = getStorageSettings();
+      const daoRoot = getDaoRoot();
 
       if (!ctx.hasUI) {
         pi.sendMessage({
           customType: "dao-config",
-          content: `## DAO Config\n- Quorum: ${state.config.quorumPercent}%\n- Approval: ${state.config.approvalThreshold}%\n- Model: ${state.config.defaultModel}\n- Max concurrent: ${state.config.maxConcurrent}\n- Risk threshold: ${state.config.riskThreshold}/10\n- Required gates: ${state.config.requiredGates.join(", ")}`,
+          content:
+            `## DAO Config\n` +
+            `- Quorum: ${state.config.quorumPercent}%\n` +
+            `- Approval: ${state.config.approvalThreshold}%\n` +
+            `- Model: ${state.config.defaultModel}\n` +
+            `- Max concurrent: ${state.config.maxConcurrent}\n` +
+            `- Risk threshold: ${state.config.riskThreshold}/10\n` +
+            `- Required gates: ${state.config.requiredGates.join(", ")}\n` +
+            `- Storage mode: ${storage.mode}\n` +
+            `- Local store: ${daoRoot}\n` +
+            `- GitHub sync: ${storage.githubSyncEnabled ? "enabled" : "disabled"}`,
           display: true,
         });
         return;
@@ -2319,11 +2331,30 @@ export default function daoExtension(pi: ExtensionAPI) {
         `Default model: ${state.config.defaultModel}`,
         `Max concurrent: ${state.config.maxConcurrent}`,
         `Risk threshold: ${state.config.riskThreshold}/10`,
+        `GitHub sync: ${storage.githubSyncEnabled ? "enabled" : "disabled"}`,
         "Cancel",
       ];
       const choice = await ctx.ui.select("DAO Configuration", options);
 
       if (!choice || choice === "Cancel") return;
+
+      if (choice.startsWith("GitHub sync:")) {
+        const updated = updateStorageSettings({
+          githubSyncEnabled: !storage.githubSyncEnabled,
+        });
+        recordAudit(
+          0,
+          "governance",
+          "storage_config_updated",
+          "user",
+          `GitHub sync ${updated.githubSyncEnabled ? "enabled" : "disabled"} via /dao:config`,
+        );
+        ctx.ui.notify(
+          `GitHub sync ${updated.githubSyncEnabled ? "enabled" : "disabled"}`,
+          "info",
+        );
+        return;
+      }
 
       const configMap: Record<
         string,
