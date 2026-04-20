@@ -252,6 +252,20 @@ const updateDeliberationAgentState = (
   if (index < 0) return next;
 
   const current = next[index];
+
+  if (update.phase === "started") {
+    next[index] = {
+      ...current,
+      status: "active",
+      note: update.isRetry ? "retry" : undefined,
+    };
+    return next;
+  }
+
+  if (!update.output) {
+    return next;
+  }
+
   const parsedVote = update.output.content
     ? parseVoteFromOutput(
         update.output.agentId,
@@ -278,9 +292,7 @@ const updateDeliberationAgentState = (
       (parsedVote.position !== "abstain" ||
         parsedVote.reasoning !== "No vote section found in agent output")
         ? parsedVote.position
-        : update.output.error
-          ? "abstain"
-          : "abstain",
+        : "abstain",
     note: update.isRetry ? "retried" : undefined,
   };
   return next;
@@ -2598,6 +2610,8 @@ export default function daoExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`🗳️ Deliberating on ${label}...`, "info");
       }
 
+      let lastRenderAt = 0;
+
       const pushDeliberationLiveState = (
         proposal: Proposal,
         liveAgents: DeliberationAgentLiveState[],
@@ -2626,6 +2640,11 @@ export default function daoExtension(pi: ExtensionAPI) {
           batchLabel: targets.length > 1 ? `${batchIndex + 1}/${targets.length}` : undefined,
           agents: liveAgents,
         };
+
+        const now = Date.now();
+        const shouldRender = completed || now - lastRenderAt >= 50;
+        if (!shouldRender) return;
+        lastRenderAt = now;
 
         if (deliberationOverlay) {
           deliberationOverlay.setState(liveState, completed);
@@ -2849,12 +2868,12 @@ export default function daoExtension(pi: ExtensionAPI) {
         }
 
         if (ctx.hasUI && proposalIndex < targets.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
       if (ctx.hasUI) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 700));
         closeDeliberationOverlay?.();
         await deliberationOverlaySession;
         ctx.ui.setWidget(deliberationWidgetKey, undefined);

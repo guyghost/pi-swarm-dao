@@ -238,8 +238,9 @@ export interface SwarmProgressUpdate {
   totalAgents: number;
   agentId: string;
   agentName: string;
-  output: AgentOutput;
+  output?: AgentOutput;
   isRetry: boolean;
+  phase: "started" | "completed";
 }
 
 /**
@@ -266,6 +267,15 @@ export const dispatchSwarm = async (
     agents,
     maxConcurrent,
     async (agent) => {
+      onProgress?.({
+        completed,
+        total: totalAgents,
+        totalAgents,
+        agentId: agent.id,
+        agentName: agent.name,
+        isRetry: false,
+        phase: "started",
+      });
       const output = await runAgent(agent, proposal, signal);
       completed++;
       onProgress?.({
@@ -276,6 +286,7 @@ export const dispatchSwarm = async (
         agentName: agent.name,
         output,
         isRetry: false,
+        phase: "completed",
       });
       return output;
     }
@@ -310,6 +321,15 @@ export const dispatchSwarm = async (
       retryAgents,
       maxConcurrent,
       async (agent) => {
+        onProgress?.({
+          completed,
+          total: totalAgents + timedOutIndices.length,
+          totalAgents,
+          agentId: agent.id,
+          agentName: agent.name,
+          isRetry: true,
+          phase: "started",
+        });
         const output = await runAgent(agent, proposal, signal);
         completed++;
         onProgress?.({
@@ -320,6 +340,7 @@ export const dispatchSwarm = async (
           agentName: agent.name,
           output,
           isRetry: true,
+          phase: "completed",
         });
         return output;
       }

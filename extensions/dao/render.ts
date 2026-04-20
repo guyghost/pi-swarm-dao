@@ -1,3 +1,4 @@
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type {
   DAOState,
   Proposal,
@@ -164,7 +165,7 @@ export interface DeliberationAgentLiveState {
   agentId: string;
   agentName: string;
   weight: number;
-  status: "pending" | "completed" | "error";
+  status: "pending" | "active" | "completed" | "error";
   vote?: VotePosition;
   note?: string;
 }
@@ -199,14 +200,18 @@ export const renderDeliberationProgress = (
 /**
  * Render a live deliberation widget for interactive /dao:deliberate UI.
  */
-const padRight = (value: string, width: number): string =>
-  value.length >= width ? value.slice(0, width) : value + " ".repeat(width - value.length);
+const padRight = (value: string, width: number): string => {
+  const truncated = truncateToWidth(value, width, "");
+  return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
+};
 
 const centerText = (value: string, width: number): string => {
-  if (value.length >= width) return value.slice(0, width);
-  const left = Math.floor((width - value.length) / 2);
-  const right = width - value.length - left;
-  return " ".repeat(left) + value + " ".repeat(right);
+  const truncated = truncateToWidth(value, width, "");
+  const visible = visibleWidth(truncated);
+  if (visible >= width) return truncated;
+  const left = Math.floor((width - visible) / 2);
+  const right = width - visible - left;
+  return " ".repeat(left) + truncated + " ".repeat(right);
 };
 
 const placeText = (line: string, col: number, text: string): string => {
@@ -286,15 +291,17 @@ const shortenAgentName = (name: string): string => {
 };
 
 const deliberationAgentIcon = (agent: DeliberationAgentLiveState): string => {
-  if (agent.status === "error") return "⚠️";
-  if (agent.status === "pending") return "⏳";
-  if (agent.vote === "for") return "✅";
-  if (agent.vote === "against") return "❌";
-  return "⏸️";
+  if (agent.status === "error") return "!";
+  if (agent.status === "active") return "◉";
+  if (agent.status === "pending") return "○";
+  if (agent.vote === "for") return "✓";
+  if (agent.vote === "against") return "✕";
+  return "·";
 };
 
 const deliberationAgentVote = (agent: DeliberationAgentLiveState): string => {
   if (agent.status === "error") return agent.note ? `ERROR · ${agent.note}` : "ERROR";
+  if (agent.status === "active") return "ANALYSING";
   if (agent.status === "pending") return "PENDING";
   if (agent.vote === "for") return `FOR +${agent.weight}`;
   if (agent.vote === "against") return "AGAINST";
@@ -328,30 +335,35 @@ export const renderDeliberationLiveWidget = (
   writeText(board, centerBox.row + 4, centerBox.col + 1, centerText(state.subtitle.slice(0, centerBox.width - 2), centerBox.width - 2));
 
   const positions = [
-    { row: 0, col: 31, anchorRow: 2, anchorCol: 40 },
-    { row: 2, col: 60, anchorRow: 4, anchorCol: 60 },
-    { row: 7, col: 68, anchorRow: 8, anchorCol: 68 },
-    { row: 14, col: 60, anchorRow: 14, anchorCol: 60 },
-    { row: 16, col: 31, anchorRow: 16, anchorCol: 40 },
-    { row: 14, col: 2, anchorRow: 14, anchorCol: 22 },
-    { row: 4, col: 2, anchorRow: 5, anchorCol: 22 },
+    { row: 0, col: 30, anchorRow: 3, anchorCol: 40 },
+    { row: 2, col: 58, anchorRow: 5, anchorCol: 60 },
+    { row: 7, col: 67, anchorRow: 9, anchorCol: 68 },
+    { row: 14, col: 58, anchorRow: 14, anchorCol: 60 },
+    { row: 15, col: 30, anchorRow: 15, anchorCol: 40 },
+    { row: 13, col: 3, anchorRow: 14, anchorCol: 24 },
+    { row: 3, col: 3, anchorRow: 5, anchorCol: 24 },
   ];
 
-  state.agents.slice(0, positions.length).forEach((agent, index) => {
+  const placedAgents = state.agents.slice(0, positions.length).map((agent, index) => {
     const position = positions[index]!;
     const title = `${deliberationAgentIcon(agent)} ${shortenAgentName(agent.agentName)} [${agent.weight}]`;
     const vote = deliberationAgentVote(agent);
-    const boxWidth = Math.min(Math.max(title.length, vote.length) + 2, 22);
-    drawBox(board, position.row, position.col, boxWidth, 4);
-    writeText(board, position.row + 1, position.col + 1, padRight(title, boxWidth - 2));
-    writeText(board, position.row + 2, position.col + 1, padRight(vote, boxWidth - 2));
-
-    const fromRow = center.row;
-    const fromCol = center.col;
-    const toRow = position.anchorRow;
-    const toCol = position.anchorCol;
-    drawDottedLine(board, fromRow, fromCol, toRow, toCol);
+    const boxWidth = Math.min(
+      Math.max(visibleWidth(title), visibleWidth(vote)) + 2,
+      22,
+    );
+    return { agent, position, title, vote, boxWidth };
   });
+
+  for (const placed of placedAgents) {
+    drawDottedLine(board, center.row, center.col, placed.position.anchorRow, placed.position.anchorCol);
+  }
+
+  for (const placed of placedAgents) {
+    drawBox(board, placed.position.row, placed.position.col, placed.boxWidth, 4);
+    writeText(board, placed.position.row + 1, placed.position.col + 1, padRight(placed.title, placed.boxWidth - 2));
+    writeText(board, placed.position.row + 2, placed.position.col + 1, padRight(placed.vote, placed.boxWidth - 2));
+  }
 
   const extraAgents = state.agents.slice(positions.length);
   const lines = [

@@ -16,20 +16,22 @@ const styleLine = (theme: Theme, line: string): string => {
     line.startsWith("├") ||
     line.includes("│")
   ) {
-    if (line.includes("APPROVED")) return theme.fg("success", line);
-    if (line.includes("REJECTED") || line.includes("FAILED")) return theme.fg("error", line);
-    if (line.includes("IN PROGRESS")) return theme.fg("accent", line);
+    if (line.includes("APPROUVÉ") || line.includes("APPROVED")) return theme.fg("success", line);
+    if (line.includes("REJETÉ") || line.includes("REJECTED") || line.includes("ECHEC") || line.includes("FAILED")) {
+      return theme.fg("error", line);
+    }
+    if (line.includes("EN COURS") || line.includes("IN PROGRESS")) return theme.fg("accent", line);
     return theme.fg("borderAccent", line);
   }
 
-  if (line.includes("✅") || line.includes("FOR +")) return theme.fg("success", line);
-  if (line.includes("❌") || line.includes("⚠️") || line.includes("ERROR")) return theme.fg("error", line);
-  if (line.includes("⏳") || line.includes("PENDING")) return theme.fg("warning", line);
+  if (line.includes("✓") || line.includes("FOR +")) return theme.fg("success", line);
+  if (line.includes("✕") || line.includes("!") || line.includes("ERROR")) return theme.fg("error", line);
+  if (line.includes("◉") || line.includes("ANALYSING") || line.includes("PENDING") || line.includes("○")) return theme.fg("warning", line);
   return theme.fg("text", line);
 };
 
 export class DeliberationOverlayComponent {
-  readonly width = 96;
+  readonly width = 94;
 
   private state?: DeliberationLiveState;
   private completed = false;

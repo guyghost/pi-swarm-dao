@@ -8,7 +8,23 @@ import { DEFAULT_AGENTS } from "./default-agents.js";
  */
 export const initializeAgents = (customAgents?: DAOAgent[]): DAOAgent[] => {
   const state = getState();
-  const agents = customAgents ?? [...DEFAULT_AGENTS];
+
+  if (!customAgents && state.initialized && state.agents.length > 0) {
+    return state.agents;
+  }
+
+  const sourceAgents = customAgents ?? DEFAULT_AGENTS;
+  const agents = sourceAgents.map((agent) => ({
+    ...agent,
+    councils: agent.councils ? [...agent.councils] : [],
+    tools: agent.tools ? [...agent.tools] : undefined,
+    authorizedInputs: agent.authorizedInputs ? [...agent.authorizedInputs] : undefined,
+    authorizedData: agent.authorizedData ? [...agent.authorizedData] : undefined,
+    authorizedEnvironments: agent.authorizedEnvironments ? [...agent.authorizedEnvironments] : undefined,
+    stopConditions: agent.stopConditions ? agent.stopConditions.map((item) => ({ ...item })) : undefined,
+    kpis: agent.kpis ? agent.kpis.map((item) => ({ ...item })) : undefined,
+  }));
+
   state.agents = agents;
   state.initialized = true;
   setState(state);

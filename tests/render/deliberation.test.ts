@@ -25,7 +25,7 @@ describe("deliberation rendering", () => {
       agents: [
         { agentId: "strategist", agentName: "Product Strategist", weight: 3, status: "completed", vote: "for" },
         { agentId: "researcher", agentName: "Research Agent", weight: 2, status: "completed", vote: "for" },
-        { agentId: "architect", agentName: "Solution Architect", weight: 3, status: "pending" },
+        { agentId: "architect", agentName: "Solution Architect", weight: 3, status: "active" },
         { agentId: "critic", agentName: "Critic / Risk Agent", weight: 3, status: "error", note: "no vote" },
       ],
     });
@@ -33,9 +33,11 @@ describe("deliberation rendering", () => {
     expect(lines.some((line) => line.includes("Délibération Pi-Swarm-DAO"))).toBe(true);
     expect(lines.some((line) => line.includes("SCORE ACTUEL 5/15   SEUIL REQUIS 8   ÉTAT IN PROGRESS"))).toBe(true);
     expect(lines.some((line) => line.includes("Progress [███░░░░] 3/7 — last: Research Agent"))).toBe(true);
-    expect(lines.some((line) => line.includes("✅ Product [3]"))).toBe(true);
+    expect(lines.some((line) => line.includes("✓ Product [3]"))).toBe(true);
     expect(lines.some((line) => line.includes("FOR +3"))).toBe(true);
-    expect(lines.some((line) => line.includes("⚠️ Critic/Risk [3]"))).toBe(true);
+    expect(lines.some((line) => line.includes("◉ Architect [3]"))).toBe(true);
+    expect(lines.some((line) => line.includes("ANALYSING"))).toBe(true);
+    expect(lines.some((line) => line.includes("! Critic/Risk [3]"))).toBe(true);
     expect(lines.some((line) => line.includes("ERROR · no vote"))).toBe(true);
   });
 });
