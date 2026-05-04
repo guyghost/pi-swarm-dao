@@ -599,6 +599,43 @@ const gateDependencyConflict: GateFn = (proposal) => {
   };
 };
 
+/**
+ * mandatory-dry-run: Verify that a dry-run has been performed and canProceed.
+ * PASS if: proposal has dryRunAt and dryRunCanProceed === true.
+ * BLOCKER if: no dry-run recorded or canProceed === false.
+ */
+const gateMandatoryDryRun = (proposal: Proposal): GateResult => {
+  if (!proposal.dryRunAt) {
+    return {
+      gateId: "mandatory-dry-run",
+      name: "Mandatory Dry-Run",
+      passed: false,
+      severity: "blocker",
+      message: "No dry-run recorded. Run `dao_dry_run` before executing.",
+    };
+  }
+
+  if (proposal.dryRunCanProceed === false) {
+    return {
+      gateId: "mandatory-dry-run",
+      name: "Mandatory Dry-Run",
+      passed: false,
+      severity: "blocker",
+      message: "Previous dry-run flagged risks (canProceed: false). Review and re-run `dao_dry_run`.",
+      details: { dryRunAt: proposal.dryRunAt },
+    };
+  }
+
+  return {
+    gateId: "mandatory-dry-run",
+    name: "Mandatory Dry-Run",
+    passed: true,
+    severity: "info",
+    message: `Dry-run performed at ${proposal.dryRunAt}`,
+    details: { dryRunAt: proposal.dryRunAt, canProceed: proposal.dryRunCanProceed },
+  };
+};
+
 const GATES: Record<string, GateFn> = {
   "quorum-quality": gateQuorumQuality,
   "risk-threshold": gateRiskThreshold,
@@ -614,6 +651,7 @@ const GATES: Record<string, GateFn> = {
   "acceptance-criteria": gateAcceptanceCriteria,
   "dependency-readiness": gateDependencyReadiness,
   "dependency-conflict": gateDependencyConflict,
+  "mandatory-dry-run": gateMandatoryDryRun,
 };
 
 // ── Public API ───────────────────────────────────────────────

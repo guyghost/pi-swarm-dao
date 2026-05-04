@@ -516,6 +516,10 @@ export interface Proposal {
   amendmentState?: AmendmentState;
   preAmendmentSnapshot?: AmendmentSnapshot;
 
+  // Dry-Run tracking (Proposal #15)
+  dryRunAt?: string;
+  dryRunCanProceed?: boolean;
+
   createdAt: string;
   resolvedAt?: string;
 }
@@ -811,7 +815,7 @@ export const DEFAULT_CONFIG: DAOConfig = {
   defaultModel: "z.ai/GLM-5.1",
   maxConcurrent: 4,
   riskThreshold: 7,
-  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance", "acceptance-criteria", "dependency-readiness", "dependency-conflict"],
+  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance", "acceptance-criteria", "dependency-readiness", "dependency-conflict", "mandatory-dry-run"],
   typeQuorum: TYPE_QUORUM,
   quorumFloor: 60,
 };

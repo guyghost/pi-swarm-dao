@@ -4957,6 +4957,12 @@ export default function daoExtension(pi: ExtensionAPI) {
       const result = performDryRun(params.proposalId, plan);
       ghAddSnapshot(proposal, snapshot, result);
 
+      // Persist dry-run result on proposal for gate checking
+      proposal.dryRunAt = new Date().toISOString();
+      proposal.dryRunCanProceed = result.canProceed;
+      const state = getState();
+      setState(state);
+
       recordAudit(
         params.proposalId,
         "delivery",
