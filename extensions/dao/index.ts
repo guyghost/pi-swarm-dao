@@ -1722,6 +1722,17 @@ export default function daoExtension(pi: ExtensionAPI) {
       return `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). It must pass deliberation and control gates first.`;
     }
 
+    // ── Mandatory dry-run guard ──────────────────────────────
+    const daoConfig = getState().config;
+    if (daoConfig.requiredGates.includes("mandatory-dry-run")) {
+      if (!proposal.dryRunAt) {
+        return `❌ Execution blocked: mandatory dry-run gate not satisfied. Run \`dao_dry_run ${proposal.id}\` first.`;
+      }
+      if (proposal.dryRunCanProceed === false) {
+        return `❌ Execution blocked: previous dry-run flagged risks (canProceed: false). Review and re-run \`dao_dry_run ${proposal.id}\`.`;
+      }
+    }
+
     recordAudit(
       proposal.id,
       "delivery",
@@ -3693,7 +3704,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       const hostCtx = detectHostContext();
-      const totalSteps = 3; // deliberate → check → execute
+      const totalSteps = 4; // deliberate → dry-run → check → execute
       let currentStep = 0;
 
       const reportProgress = (step: string, detail: string) => {
@@ -3717,8 +3728,9 @@ export default function daoExtension(pi: ExtensionAPI) {
             `**Projet:** ${hostCtx.repoSlug}\n\n` +
             `| Étape | Statut |\n|-------|--------|\n` +
             `${currentStep >= 1 ? `| 🗳️ Deliberate | ${currentStep > 1 ? (proposal!.status === "approved" || proposal!.status === "controlled" || proposal!.status === "executed" ? "✅" : "❌") : "⏳ " + detail} |\n` : ""}` +
-            `${currentStep >= 2 ? `| 🛡️ Check | ${currentStep > 2 ? "✅" : "⏳ " + detail} |\n` : ""}` +
-            `${currentStep >= 3 ? `| 🚀 Execute | ${currentStep > 3 ? "✅" : "⏳ " + detail} |\n` : ""}`,
+            `${currentStep >= 2 ? `| 🧪 Dry-Run | ${currentStep > 2 ? "✅" : "⏳ " + detail} |\n` : ""}` +
+            `${currentStep >= 3 ? `| 🛡️ Check | ${currentStep > 3 ? "✅" : "⏳ " + detail} |\n` : ""}` +
+            `${currentStep >= 4 ? `| 🚀 Execute | ${currentStep > 4 ? "✅" : "⏳ " + detail} |\n` : ""}`,
           display: true,
         });
       };
@@ -3864,7 +3876,24 @@ export default function daoExtension(pi: ExtensionAPI) {
           }
         }
 
-        // ── STEP 2: CHECK (Control Gates) ───────────────────────
+        // ── STEP 2: DRY-RUN ─────────────────────────────────────
+        reportProgress("Dry-Run", "Analyzing execution risks...");
+        const shipDryRunSnapshot = captureSnapshot(proposal.id);
+        const shipPlan = proposal.executionResult || proposal.description;
+        const shipDryRunResult = performDryRun(proposal.id, shipPlan);
+        proposal.dryRunAt = new Date().toISOString();
+        proposal.dryRunCanProceed = shipDryRunResult.canProceed;
+        setState(getState());
+        ghAddSnapshot(proposal, shipDryRunSnapshot, shipDryRunResult);
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "dry_run",
+          "system",
+          `Ship pipeline: dry-run completed for proposal #${proposal.id}`,
+        );
+
+        // ── STEP 3: CHECK (Control Gates) ───────────────────────
         if (!skipCheck) {
           reportProgress("Check", "Running control gates...");
 
