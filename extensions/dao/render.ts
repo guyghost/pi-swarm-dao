@@ -183,6 +183,7 @@ export interface DeliberationLiveState {
   lastAgent?: string;
   agents: DeliberationAgentLiveState[];
   batchLabel?: string;
+  projectName?: string;
 }
 
 /**
@@ -318,7 +319,8 @@ export const renderDeliberationLiveWidget = (
     "░".repeat(Math.max(0, state.totalAgents - state.completedAgents));
   const batchPrefix = state.batchLabel ? `${state.batchLabel} • ` : "";
 
-  const headerLeft = "Délibération Pi-Swarm-DAO";
+  const projectLabel = state.projectName || "Pi-Swarm-DAO";
+  const headerLeft = `Délibération ${projectLabel}`;
   const headerRight = `SCORE ACTUEL ${state.weightedFor}/${state.totalWeight}   SEUIL REQUIS ${state.requiredWeight}   ÉTAT ${state.statusLabel}`;
   const headerLine = padRight(headerLeft, Math.max(0, innerWidth - headerRight.length)) + headerRight;
 

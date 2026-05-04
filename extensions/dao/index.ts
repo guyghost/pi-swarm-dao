@@ -2611,6 +2611,7 @@ export default function daoExtension(pi: ExtensionAPI) {
       }
 
       let lastRenderAt = 0;
+      const deliberationProjectName = detectHostContext().repoName;
 
       const pushDeliberationLiveState = (
         proposal: Proposal,
@@ -2639,6 +2640,7 @@ export default function daoExtension(pi: ExtensionAPI) {
           lastAgent,
           batchLabel: targets.length > 1 ? `${batchIndex + 1}/${targets.length}` : undefined,
           agents: liveAgents,
+          projectName: deliberationProjectName,
         };
 
         const now = Date.now();
