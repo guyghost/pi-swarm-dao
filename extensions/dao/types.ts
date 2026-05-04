@@ -811,7 +811,7 @@ export const DEFAULT_CONFIG: DAOConfig = {
   defaultModel: "z.ai/GLM-5.1",
   maxConcurrent: 4,
   riskThreshold: 7,
-  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance"],
+  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance", "acceptance-criteria", "dependency-readiness", "dependency-conflict"],
   typeQuorum: TYPE_QUORUM,
   quorumFloor: 60,
 };

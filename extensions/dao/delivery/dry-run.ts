@@ -46,6 +46,13 @@ const getChangedFiles = (ref: string): string[] => {
 export const captureSnapshot = (proposalId: number): ExecutionSnapshot => {
   const state = getState();
 
+  // If a snapshot already exists (e.g. from a prior dry-run), reuse it
+  // to preserve the pre-modification baseline for rollback.
+  const existing = state.snapshots[proposalId];
+  if (existing) {
+    return existing;
+  }
+
   const snapshot: ExecutionSnapshot = {
     proposalId,
     timestamp: new Date().toISOString(),
