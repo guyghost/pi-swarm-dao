@@ -17,6 +17,7 @@ import type { MachineEvents } from "../core/machine.js";
 import { fireHooks, CriticalHookError } from "./hooks.js";
 import { getState, setState } from "../persistence.js";
 import { recordAudit } from "../control/audit.js";
+import { ghUpdateStatus } from "../github-persistence.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -209,6 +210,9 @@ export const transitionProposal = async (
   }
 
   setState(state);
+
+  // Sync GitHub issue labels with new status
+  ghUpdateStatus(proposal);
 
   // Fire hooks (side effect) — may throw CriticalHookError
   try {
