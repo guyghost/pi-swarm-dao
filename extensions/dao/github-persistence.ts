@@ -290,6 +290,13 @@ export const ensureLabels = (): void => {
 const gh = (...args: string[]): string => {
   if (!isGitHubSyncEnabled()) return "";
 
+  // Truncate issue body/comment to avoid GitHub's 65536 char limit
+  const MAX_BODY_CHARS = 60000;
+  const bodyIndex = args.indexOf("--body");
+  if (bodyIndex >= 0 && bodyIndex + 1 < args.length && args[bodyIndex + 1].length > MAX_BODY_CHARS) {
+    args[bodyIndex + 1] = args[bodyIndex + 1].slice(0, MAX_BODY_CHARS) + "\n\n... [truncated: content exceeded GitHub limit]";
+  }
+
   try {
     return execFileSync("gh", args, {
       cwd: process.cwd(),
