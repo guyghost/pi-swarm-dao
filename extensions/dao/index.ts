@@ -3742,13 +3742,13 @@ export default function daoExtension(pi: ExtensionAPI) {
         customType: "dao-ship-start",
         content:
           `# 🚢 Ship Pipeline Starting — #${proposal.id}: ${proposal.title}\n\n` +
-          `This will run: Deliberate → Dry-Run → Control Gates → Execute. ` +
+          `This will run: Deliberate → Dry-Run → Control Gates → Execute → Artefacts. ` +
           `⏳ Total time: 3–8 minutes depending on proposal complexity.`,
         display: true,
       });
 
       const hostCtx = detectHostContext();
-      const totalSteps = 4; // deliberate → dry-run → check → execute
+      const totalSteps = 5; // deliberate → dry-run → check → execute → artefacts
       let currentStep = 0;
 
       const reportProgress = (step: string, detail: string) => {
@@ -3775,7 +3775,8 @@ export default function daoExtension(pi: ExtensionAPI) {
             `${currentStep >= 1 ? `| 🗳️ Deliberate | ${currentStep > 1 ? (proposal!.status === "approved" || proposal!.status === "controlled" || proposal!.status === "executed" ? "✅" : "❌") : "⏳ " + detail} |\n` : ""}` +
             `${currentStep >= 2 ? `| 🧪 Dry-Run | ${currentStep > 2 ? "✅" : "⏳ " + detail} |\n` : ""}` +
             `${currentStep >= 3 ? `| 🛡️ Check | ${currentStep > 3 ? "✅" : "⏳ " + detail} |\n` : ""}` +
-            `${currentStep >= 4 ? `| 🚀 Execute | ${currentStep > 4 ? "✅" : "⏳ " + detail} |\n` : ""}`,
+            `${currentStep >= 4 ? `| 🚀 Execute | ${currentStep > 4 ? "✅" : "⏳ " + detail} |\n` : ""}` +
+            `${currentStep >= 5 ? `| 📚 Artefacts | ${currentStep > 5 ? "✅" : "⏳ " + detail} |\n` : ""}`,
           display: true,
         });
       };
@@ -4041,6 +4042,36 @@ export default function daoExtension(pi: ExtensionAPI) {
           `Ship pipeline: execution completed for proposal #${proposal.id}`,
         );
 
+        // ── STEP 5: ARTEFACTS ────────────────────────────────────
+        reportProgress("Artefacts", "Generating decision artefacts...");
+
+        const deliveryOutput = proposal.agentOutputs.find(
+          (o) => o.agentId === "delivery",
+        );
+        const plan = parseDeliveryPlan(
+          proposal.id,
+          deliveryOutput?.content ?? proposal.description,
+        );
+        storePlan(plan);
+
+        const artefacts = generateAllArtefacts(
+          proposal,
+          tallyResult ?? { approvalScore: 0, weightedFor: 0, totalVotingWeight: 0 },
+          controlResultValue ?? { allGatesPassed: true, blockerCount: 0, warningCount: 0 },
+          plan,
+        );
+        const artefactFileIndex = persistArtefactsToRepo(proposal, artefacts);
+        const artefactPaths = Object.values(artefactFileIndex).map((f) => f.path);
+        ghAddArtefacts(proposal, 7, artefactFileIndex);
+
+        recordAudit(
+          proposal.id,
+          "delivery",
+          "artefacts_generated",
+          "system",
+          `Ship pipeline: ${artefactPaths.length} artefact files generated for proposal #${proposal.id}`,
+        );
+
         // ── SUCCESS ──────────────────────────────────────────────
         const deliberationDetail = tallyResult
           ? `${Math.round(tallyResult.approvalScore)}% approval, score ${compositeScoreResult.weighted}/100`
@@ -4062,13 +4093,21 @@ export default function daoExtension(pi: ExtensionAPI) {
             `**Projet:** ${hostCtx.repoSlug}\n\n` +
             `| Étape | Statut | Détail |\n|-------|--------|--------|\n` +
             `| 🗳️ Deliberate | ✅ Approved | ${deliberationDetail} |\n` +
+            `| 🧪 Dry-Run | ✅ Done | Risks analyzed |\n` +
             `| 🛡️ Check | ✅ All gates passed | ${checkDetail} |\n` +
-            `| 🚀 Execute | ✅ Done | Delivery plan generated |\n\n` +
-            `### Execution Output\n${executionResult.slice(0, 1000)}${executionResult.length > 1000 ? "\n\n[…truncated]" : ""}\n\n` +
+            `| 🚀 Execute | ✅ Done | Implementation plan generated |\n` +
+            `| 📚 Artefacts | ✅ Done | ${artefactPaths.length} files created |\n\n` +
+            `### 📋 Implementation Plan\n${executionResult.slice(0, 1200)}${executionResult.length > 1200 ? "\n\n[…truncated]" : ""}\n\n` +
             `---\n\n` +
-            `Next steps:\n` +
-            `- \`dao_artefacts(${proposal.id})\` — view generated artefacts\n` +
-            `- \`dao_rate(${proposal.id})\` — rate the outcome`,
+            `### 📁 Generated Artefacts\n` +
+            artefactPaths.map((f) => `- \`${f}\``).join("\n") +
+            `\n\n---\n\n` +
+            `### ⭐ Rate this Proposal\n` +
+            `How did this execution go? Run \`dao_rate(${proposal.id})\` to leave feedback.\n\n` +
+            `**Example:**\n` +
+            `\`\`\`\n` +
+            `dao_rate(${proposal.id}, score=5, comment="Shipped cleanly, all tests pass.")\n` +
+            `\`\`\``,
           display: true,
         });
       } catch (err: any) {
