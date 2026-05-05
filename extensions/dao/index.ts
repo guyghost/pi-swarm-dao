@@ -1647,6 +1647,10 @@ export default function daoExtension(pi: ExtensionAPI) {
       return `Proposal #${proposalId} not found.`;
     }
 
+    onProgress?.(
+      `🛡️ Preparing control gates for proposal #${proposal.id}: ${proposal.title}...`,
+    );
+
     if (proposal.status !== "approved" && proposal.status !== "controlled") {
       return `Proposal #${proposal.id} is not approved/controlled (status: ${proposal.status}). Run \`dao_deliberate\` first.`;
     }
@@ -1709,6 +1713,9 @@ export default function daoExtension(pi: ExtensionAPI) {
       return `Proposal #${proposalId} not found.`;
     }
 
+    onProgress?.(`🚀 Preparing execution for proposal #${proposal.id}: ${proposal.title}...`);
+    ctx?.ui?.setWorkingMessage?.(`DAO: Preparing execution for #${proposal.id}...`);
+
     if (proposal.status === "failed") {
       const retryResult = await transitionProposal(proposal.id, "retry", {
         status: proposal.status,
@@ -1742,6 +1749,9 @@ export default function daoExtension(pi: ExtensionAPI) {
     );
 
     onProgress?.(`🚀 Executing proposal #${proposal.id}: ${proposal.title}...`);
+    ctx?.ui?.setWorkingMessage?.(
+      "DAO: Executing proposal (⏳ this may take several minutes)...",
+    );
 
     try {
       const snapshot = captureSnapshot(proposal.id);
@@ -3703,13 +3713,25 @@ export default function daoExtension(pi: ExtensionAPI) {
         return;
       }
 
+      // Immediate visual feedback so the user knows the pipeline is alive
+      ctx.ui.setWorkingMessage?.(`DAO: Starting ship pipeline for #${proposal.id}...`);
+      pi.sendMessage({
+        customType: "dao-ship-start",
+        content:
+          `# 🚢 Ship Pipeline Starting — #${proposal.id}: ${proposal.title}\n\n` +
+          `This will run: Deliberate → Dry-Run → Control Gates → Execute. ` +
+          `⏳ Total time: 3–8 minutes depending on proposal complexity.`,
+        display: true,
+      });
+
       const hostCtx = detectHostContext();
       const totalSteps = 4; // deliberate → dry-run → check → execute
       let currentStep = 0;
 
       const reportProgress = (step: string, detail: string) => {
         currentStep++;
-        // Immediate visual feedback via status bar + notification + widget
+        // Immediate visual feedback via status bar + notification + widget + working message
+        ctx.ui.setWorkingMessage?.(`DAO: Ship — ${step}: ${detail}`);
         ctx.ui.setStatus("dao-ship", step + ": " + detail);
         ctx.ui.notify(step + ": " + detail, "info");
         ctx.ui.setWidget("dao-ship", [
@@ -4028,6 +4050,7 @@ export default function daoExtension(pi: ExtensionAPI) {
         });
       } catch (err: any) {
         // Something went wrong mid-pipeline
+        ctx.ui.setWorkingMessage?.();
         recordAudit(
           proposal.id,
           "delivery",
