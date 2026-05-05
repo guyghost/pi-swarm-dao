@@ -13,6 +13,13 @@ import type {
   VotePosition,
 } from "./types.js";
 import { PROPOSAL_TYPE_LABELS } from "./types.js";
+import {
+  computeHealthScore,
+  formatHealthScore,
+  formatHealthTrend,
+  getHealthTrend,
+  snapshotWeeklyScore,
+} from "./health-score.js";
 
 /** Emoji for each proposal type — derived from PROPOSAL_TYPE_LABELS */
 const typeEmoji = (type: Proposal["type"]): string => {
@@ -78,6 +85,13 @@ export const renderDashboard = (state: DAOState): string => {
   lines.push(`| 🧠 Intelligence | Produce analysis and recommendations | ${state.agents.length} agents |`);
   lines.push(`| 🛡️ Control | Reduce risk before publication | ${state.config.requiredGates.length} gates configured |`);
   lines.push("| 🚀 Delivery | Convert decisions into execution | Ready |");
+  lines.push("");
+
+  // === Health Score (Proposal #19) ===
+  const healthScore = computeHealthScore();
+  lines.push(formatHealthScore(healthScore));
+  lines.push("");
+  lines.push(formatHealthTrend(getHealthTrend(8)));
   lines.push("");
 
   // === Artefacts Status ===

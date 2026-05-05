@@ -115,6 +115,14 @@ import {
   buildAgentHostContext,
 } from "./host-context.js";
 import { DeliberationOverlayComponent } from "./deliberation-overlay.js";
+import {
+  computeHealthScore,
+  formatHealthScore,
+  getHealthTrend,
+  formatHealthTrend,
+  validateWeights,
+  getWeights,
+} from "./health-score.js";
 
 // Round Table
 import { runRoundTable, formatRoundTable } from "./intelligence/round-table.js";
@@ -1029,6 +1037,14 @@ export default function daoExtension(pi: ExtensionAPI) {
       defaultModel: Type.Optional(
         Type.String({ description: "New default LLM model" }),
       ),
+      healthWeights: Type.Optional(
+        Type.Object({
+          passRate: Type.Number({ description: "Weight for pass rate metric (0-100)", minimum: 0 }),
+          avgRating: Type.Number({ description: "Weight for avg rating metric (0-100)", minimum: 0 }),
+          deliberationDepth: Type.Number({ description: "Weight for deliberation depth metric (0-100)", minimum: 0 }),
+          participation: Type.Number({ description: "Weight for participation metric (0-100)", minimum: 0 }),
+        }, { description: "Health score metric weights — must sum to 100" }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = getState();
@@ -1047,6 +1063,13 @@ export default function daoExtension(pi: ExtensionAPI) {
         changes.maxConcurrent = params.maxConcurrent;
       if (params.defaultModel !== undefined)
         changes.defaultModel = params.defaultModel;
+      if (params.healthWeights !== undefined) {
+        const validation = validateWeights(params.healthWeights);
+        if (!validation.valid) {
+          return toolResult(`❌ Invalid healthWeights: ${validation.errors.join("; ")}`);
+        }
+        changes.healthWeights = params.healthWeights;
+      }
 
       if (Object.keys(changes).length === 0) {
         return toolResult(
@@ -4958,7 +4981,14 @@ export default function daoExtension(pi: ExtensionAPI) {
     promptSnippet: "dao_dashboard — View outcome tracking dashboard",
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       const dashboard = generateDashboard();
-      return toolResult(dashboard);
+      // Proposal #19: prepend health score to outcome dashboard
+      const healthScore = computeHealthScore();
+      const healthTrend = getHealthTrend(8);
+      const fullDashboard =
+        formatHealthScore(healthScore) + "\n\n" +
+        formatHealthTrend(healthTrend) + "\n\n---\n\n" +
+        dashboard;
+      return toolResult(fullDashboard);
     },
   });
 

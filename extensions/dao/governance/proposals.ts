@@ -12,6 +12,7 @@ import type {
 import { PROPOSAL_TYPE_LABELS } from "../types.js";
 import { getState, setState } from "../persistence.js";
 import { transitionProposal } from "../shell/lifecycle-manager.js";
+import { snapshotWeeklyScore } from "../health-score.js";
 import type { ProposalEvent, GuardContext } from "../core/states.js";
 
 // ── Status → Event Mapping (for deprecated wrapper) ──────────
@@ -264,6 +265,10 @@ export const storeDeliberationResults = (
   proposal.synthesis = synthesis;
   proposal.votes = votes;
   setState(state);
+
+  // Proposal #19: auto-capture health score snapshot after deliberation
+  snapshotWeeklyScore();
+
   return proposal;
 };
 

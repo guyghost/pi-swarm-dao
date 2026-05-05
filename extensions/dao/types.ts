@@ -575,6 +575,48 @@ export interface DAOConfig {
   quorumFloor: number;
   /** Hours before a proposal is flagged as stale in dashboard (default 24) */
   staleThresholdHours?: number;
+  /** Health score metric weights (Proposal #19) — default 25 each, sum to 100 */
+  healthWeights?: HealthWeights;
+}
+
+// ── Health Score (Proposal #19) ─────────────────────────────
+
+/** Weights for each health metric — must sum to 100 */
+export interface HealthWeights {
+  passRate: number;
+  avgRating: number;
+  deliberationDepth: number;
+  participation: number;
+}
+
+/** A single health metric breakdown */
+export interface HealthMetric {
+  name: string;
+  rawValue: number;
+  normalizedScore: number; // 0-100
+  weight: number;          // 0-100
+  contribution: number;    // normalizedScore * weight / 100
+  displayValue: string;    // human-readable
+}
+
+/** Complete health score result */
+export interface HealthScore {
+  score: number;        // 0-100 composite
+  label: string;        // e.g. "Healthy", "At Risk"
+  metrics: HealthMetric[];
+  insufficientData: boolean;
+  proposalCount: number;
+}
+
+/** Weekly snapshot of health score for trend tracking */
+export interface HealthSnapshot {
+  weekKey: string;      // e.g. "2026-W18"
+  year: number;
+  week: number;
+  score: number;
+  metrics: HealthMetric[];
+  proposalCount: number;
+  createdAt: string;
 }
 
 // ── State ────────────────────────────────────────────────────
@@ -599,6 +641,8 @@ export interface DAOState {
   verifications: Record<number, ExecutionVerification>;
   // Host project context (detected at runtime)
   hostContext?: HostProjectContext;
+  // Health Score snapshots (Proposal #19)
+  healthSnapshots?: HealthSnapshot[];
 }
 
 /** Result of a vote tally */
