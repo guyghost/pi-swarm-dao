@@ -16,7 +16,7 @@ beforeEach(() => {
       id: 1,
       title: "Incomplete proposal",
       type: "product-feature",
-      description: "Needs more structure",
+      description: "## Problem\n\nNeeds more structure.\n\n## Solution\n\nWe fix it.\n\n## User Stories\n\nUS-1\n\n## Success Metrics\n\nMetric 1",
       stage: "intake",
       proposedBy: "test",
       status: "open",

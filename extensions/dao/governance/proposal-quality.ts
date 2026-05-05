@@ -1,4 +1,12 @@
+// ============================================================
+// pi-swarm-dao — Proposal Quality Validation (V2 with Gate Schemas)
+// ============================================================
+// Refactored for Proposal #21: per-type quality gate schemas.
+// Backward-compatible with existing validateProposalQuality() API.
+// ============================================================
+
 import type { Proposal } from "../types.js";
+import { validateProposalSchema, formatSchemaFailures, getSchemaForType } from "./gate-schemas.js";
 
 export interface ProposalQualityValidationResult {
   valid: boolean;
@@ -15,6 +23,14 @@ const EXAMPLES = {
     '90% of new proposals include all required structured fields.',
   rollbackConditions:
     'Rollback if validation blocks more than 20% of previously valid proposal flows.',
+  impactAssessment:
+    'Threat: XSS via unvalidated input. Impact: user sessions compromised.',
+  migrationPath:
+    'Phase 1: dual-write to new schema. Phase 2: migrate reads. Phase 3: remove old.',
+  technicalDesign:
+    'New state machine with XState v5, pure transitions, typed context.',
+  releaseNotes:
+    'v1.2.0 — Added health score dashboard, fixed dry-run edge case.',
 } as const;
 
 const PLACEHOLDERS = {
@@ -29,21 +45,30 @@ const PLACEHOLDERS = {
   rollbackConditions: [
     'Describe at least one measurable trigger that would require rollback.',
   ],
+  impactAssessment: [
+    'Describe security impact, threat model, and affected surfaces.',
+  ],
+  migrationPath: [
+    'Describe phases, rollback plan, and backward compatibility strategy.',
+  ],
+  technicalDesign: [
+    'Describe architecture, key decisions, and trade-offs.',
+  ],
+  releaseNotes: [
+    'Summarize changes, breaking changes, and migration notes.',
+  ],
 } as const;
 
-const nonEmptyString = (value: unknown): value is string =>
-  typeof value === "string" && value.trim().length > 0;
-
-const nonEmptyStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.some(nonEmptyString);
-
-const hasAcceptanceCriteria = (proposal: Proposal): boolean =>
-  Array.isArray(proposal.acceptanceCriteria) && proposal.acceptanceCriteria.length > 0;
-
+/**
+ * Validate a proposal against its type-specific quality gate schema.
+ * Backward-compatible with the V1 API.
+ */
 export const validateProposalQuality = (
   proposal: Proposal,
 ): ProposalQualityValidationResult => {
-  if (proposal.type === "governance-change") {
+  const schemaResult = validateProposalSchema(proposal);
+
+  if (schemaResult.passed) {
     return {
       valid: true,
       missingFields: [],
@@ -51,47 +76,67 @@ export const validateProposalQuality = (
     };
   }
 
-  const problemStatement = proposal.content?.problemStatement ?? proposal.problemStatement;
-  const successMetrics = proposal.content?.successMetrics ?? proposal.successMetrics;
-  const rollbackConditions = proposal.rollbackConditions;
-
-  const missingFields: string[] = [];
-
-  if (!nonEmptyString(problemStatement)) missingFields.push("problemStatement");
-  if (!hasAcceptanceCriteria(proposal)) missingFields.push("acceptanceCriteria");
-  if (!nonEmptyStringArray(successMetrics)) missingFields.push("successMetrics");
-  if (!nonEmptyStringArray(rollbackConditions)) missingFields.push("rollbackConditions");
+  // Map schema failures to the V1 missingFields format
+  const missingFields = schemaResult.failures
+    .filter((f) => f.field)
+    .map((f) => f.field!);
 
   return {
-    valid: missingFields.length === 0,
+    valid: false,
     missingFields,
-    template: missingFields.length === 0 ? "" : formatProposalQualityTemplate(missingFields),
+    template: formatProposalQualityTemplate(proposal.type, schemaResult),
   };
 };
 
-export const formatProposalQualityTemplate = (missingFields: string[]): string => {
-  const fieldList = missingFields.map((field) => `- \`${field}\``).join("\n");
-  const examples = missingFields
-    .map((field) => `- \`${field}\`: ${EXAMPLES[field as keyof typeof EXAMPLES]}`)
-    .join("\n");
+/**
+ * Format a helpful template for missing fields/sections.
+ */
+export const formatProposalQualityTemplate = (
+  proposalType: Proposal['type'],
+  schemaResult?: import("../types.js").SchemaValidationResult,
+): string => {
+  const schema = getSchemaForType(proposalType);
 
-  const jsonTemplate = JSON.stringify(
-    {
-      problemStatement: PLACEHOLDERS.problemStatement,
-      acceptanceCriteria: PLACEHOLDERS.acceptanceCriteria,
-      successMetrics: PLACEHOLDERS.successMetrics,
-      rollbackConditions: PLACEHOLDERS.rollbackConditions,
-    },
-    null,
-    2,
-  );
+  let out = `## 📋 ${proposalType} Quality Requirements\n\n`;
+  out += `${schema.description}\n\n`;
 
-  return (
-    `## Missing Required Fields\n${fieldList}\n\n` +
-    `## Examples\n${examples}\n\n` +
-    `## Copy/Paste Template\n\n` +
-    "```json\n" +
-    `${jsonTemplate}\n` +
-    "```"
-  );
+  // Required fields table
+  out += `### Required Fields\n\n`;
+  out += `| Field | Status |\n`;
+  out += `|-------|--------|\n`;
+  for (const field of schema.requiredFields) {
+    const failed = schemaResult?.failures.find((f) => f.field === field.name);
+    const status = failed ? "❌ Missing" : "✅";
+    out += `| ${field.label} | ${status} |\n`;
+  }
+
+  // Required sections table
+  out += `\n### Required Sections\n\n`;
+  out += `| Section | Expected Heading | Status |\n`;
+  out += `|---------|-----------------|--------|\n`;
+  for (const section of schema.requiredSections) {
+    const failed = schemaResult?.failures.find((f) => f.section === section.label);
+    const status = failed ? "❌ Missing" : "✅";
+    out += `| ${section.label} | \`${section.heading}\` | ${status} |\n`;
+  }
+
+  // Type-specific examples
+  const fieldNames = schema.requiredFields.map((f) => f.name);
+  const hasExample = (name: string): name is keyof typeof EXAMPLES =>
+    name in EXAMPLES;
+
+  const exampleFields = fieldNames.filter(hasExample);
+  if (exampleFields.length > 0) {
+    out += `\n### Examples\n\n`;
+    for (const field of exampleFields) {
+      out += `- **${field}**: ${EXAMPLES[field]}\n`;
+    }
+  }
+
+  // If we have schema failures, show them
+  if (schemaResult && !schemaResult.passed) {
+    out += `\n${formatSchemaFailures(schemaResult)}`;
+  }
+
+  return out;
 };

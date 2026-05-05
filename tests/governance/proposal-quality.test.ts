@@ -6,7 +6,7 @@ const makeProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
   id: 1,
   title: "Test Proposal",
   type: "product-feature",
-  description: "A test proposal",
+  description: "## Problem\n\nUsers face an issue.\n\n## Solution\n\nWe fix it.\n\n## User Stories\n\nUS-1\n\n## Success Metrics\n\nMetric 1",
   stage: "intake",
   proposedBy: "test",
   status: "open",
@@ -76,28 +76,28 @@ describe("proposal quality validation", () => {
   });
 
   it("reports missing fields and includes a diagnostic template", () => {
-    const proposal = makeProposal();
+    const proposal = makeProposal({
+      description: "A test proposal with no sections",
+      problemStatement: undefined,
+      acceptanceCriteria: undefined,
+      successMetrics: undefined,
+      rollbackConditions: undefined,
+    });
 
     const result = validateProposalQuality(proposal);
 
     expect(result.valid).toBe(false);
-    expect(result.missingFields).toEqual([
-      "problemStatement",
-      "acceptanceCriteria",
-      "successMetrics",
-      "rollbackConditions",
-    ]);
-    expect(result.template).toContain("## Missing Required Fields");
-    expect(result.template).toContain("`problemStatement`");
-    expect(result.template).toContain("## Examples");
-    expect(result.template).toContain("## Copy/Paste Template");
-    expect(result.template).toContain("```json");
-    expect(result.template).toContain('"rollbackConditions"');
+    expect(result.missingFields.length).toBeGreaterThan(0);
+    expect(result.template).toContain("product-feature Quality Requirements");
+    expect(result.template).toContain("Problem Statement");
+    expect(result.template).toContain("❌ Missing");
   });
 
   it("skips the gate for governance-change proposals", () => {
     const proposal = makeProposal({
       type: "governance-change",
+      description: "## Problem\n\nGovernance issue.\n\n## Migration Path\n\nPhase 1.\n\n## Council Review\n\nReviewed.",
+      problemStatement: "Governance process needs improvement.",
     });
 
     const result = validateProposalQuality(proposal);

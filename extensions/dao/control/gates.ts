@@ -9,6 +9,7 @@ import type {
 } from "../types.js";
 import { getState, setState } from "../persistence.js";
 import { buildDependencyGraph, checkReadiness } from "../governance/dependency-graph.js";
+import { validateProposalSchema } from "../governance/gate-schemas.js";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -636,6 +637,23 @@ const gateMandatoryDryRun = (proposal: Proposal): GateResult => {
   };
 };
 
+/**
+ * type-specific-quality: Validate proposal against per-type schema.
+ * Proposal #21: Each proposal type has its own required fields and sections.
+ */
+const gateTypeSpecificQuality = (proposal: Proposal): GateResult => {
+  const result = validateProposalSchema(proposal);
+
+  return {
+    gateId: "type-specific-quality",
+    name: "Type-Specific Quality",
+    passed: result.passed,
+    severity: result.severity,
+    message: result.message,
+    details: result.details,
+  };
+};
+
 const GATES: Record<string, GateFn> = {
   "quorum-quality": gateQuorumQuality,
   "risk-threshold": gateRiskThreshold,
@@ -652,6 +670,7 @@ const GATES: Record<string, GateFn> = {
   "dependency-readiness": gateDependencyReadiness,
   "dependency-conflict": gateDependencyConflict,
   "mandatory-dry-run": gateMandatoryDryRun,
+  "type-specific-quality": gateTypeSpecificQuality,
 };
 
 // ── Public API ───────────────────────────────────────────────

@@ -579,6 +579,40 @@ export interface DAOConfig {
   healthWeights?: HealthWeights;
 }
 
+// ── Gate Schemas (Proposal #21) ─────────────────────────────
+
+/** A single required field definition in a gate schema */
+export interface SchemaField {
+  name: string;
+  label: string;
+  accessor: (proposal: Proposal) => unknown;
+  validator: (value: unknown) => boolean;
+}
+
+/** A gate schema defines per-type quality requirements */
+export interface GateSchema {
+  proposalType: ProposalType;
+  /** Required fields with validation */
+  requiredFields: { name: string; label: string; validator: (proposal: Proposal) => boolean }[];
+  /** Required description section headings (case-insensitive) */
+  requiredSections: { heading: string; label: string }[];
+  /** Optional risk threshold override for this type */
+  riskThresholdOverride?: number;
+  /** Human-readable description of this schema */
+  description: string;
+}
+
+/** Result of schema-based quality validation */
+export interface SchemaValidationResult {
+  passed: boolean;
+  gateId: string;
+  name: string;
+  severity: "blocker" | "warning" | "info";
+  message: string;
+  failures: { field?: string; section?: string; expected: string; actual: string }[];
+  details?: Record<string, unknown>;
+}
+
 // ── Health Score (Proposal #19) ─────────────────────────────
 
 /** Weights for each health metric — must sum to 100 */
@@ -859,7 +893,7 @@ export const DEFAULT_CONFIG: DAOConfig = {
   defaultModel: "z.ai/GLM-5.1",
   maxConcurrent: 4,
   riskThreshold: 7,
-  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance", "acceptance-criteria", "dependency-readiness", "dependency-conflict", "mandatory-dry-run"],
+  requiredGates: ["quorum-quality", "risk-threshold", "vote-consensus", "zone-compliance", "acceptance-criteria", "dependency-readiness", "dependency-conflict", "mandatory-dry-run", "type-specific-quality"],
   typeQuorum: TYPE_QUORUM,
   quorumFloor: 60,
 };
